@@ -1,0 +1,41 @@
+# Model-in-the-loop evals: per-node scores with regression thresholds, nightly and on prompt or
+# model changes. They need a running Argus stack, so they run against EVAL_API_URL (the deployed
+# watch floor's /api) with credentials that may assume the deployment's argus-operator role: the
+# API admits that role's caller token, the LLM judge runs with the same session, and the scores
+# are pushed to CloudWatch. Without the secret the job records a notice and exits green: it must
+# never block CI for contributors without a stack.
+name: evals
+on:
+  schedule: [{cron: "17 2 * * *"}]
+  workflow_dispatch:
+  pull_request:
+    paths: ["agents/shared/prompts/**", "agents/shared/models.py", "agents/shared/config.py", "agents/**/app.py", "evals/**"]
+jobs:
+  node-evals:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -r evals/requirements.txt pyyaml==6.0.3 pydantic==2.13.5
+      - name: assume the operator role
+        if: ${{ secrets.EVAL_API_URL != '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.EVAL_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.EVAL_AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ secrets.EVAL_OPERATOR_ROLE_ARN }}
+          role-duration-seconds: 3600
+          aws-region: us-east-1
+      - name: node evals
+        env:
+          EVAL_API_URL: ${{ secrets.EVAL_API_URL }}
+          EVAL_AUTH: aws-iam
+          EVAL_TLS_VERIFY: ${{ vars.EVAL_TLS_VERIFY || 'true' }}
+          AWS_REGION: us-east-1
+        run: |
+          if [ -z "$EVAL_API_URL" ]; then echo "::notice::EVAL_API_URL not set; node evals skipped"; exit 0; fi
+          python evals/node_evals.py --api "$EVAL_API_URL" --gate --push
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: eval-results, path: evals/results/, if-no-files-found: ignore}

@@ -1,0 +1,256 @@
+# One-command local stack:  docker compose up --build
+name: argus
+
+x-aws-env: &aws-env
+  AWS_REGION: ${AWS_REGION:-us-east-1}
+  AWS_PROFILE: ${AWS_PROFILE:-default}
+  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+  AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+  # Model provider: bedrock | anthropic | openai | gemini. MODEL_ID empty = provider default.
+  MODEL_PROVIDER: ${MODEL_PROVIDER:-bedrock}
+  MODEL_ID: ${MODEL_ID:-}
+  MODEL_TEMPERATURE: ${MODEL_TEMPERATURE:-0.1}
+  MODEL_MAX_TOKENS: ${MODEL_MAX_TOKENS:-4096}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+  GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+  BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-}
+  BEDROCK_GUARDRAIL_ID: ${BEDROCK_GUARDRAIL_ID:-}
+  BEDROCK_GUARDRAIL_VERSION: ${BEDROCK_GUARDRAIL_VERSION:-DRAFT}
+  # Caller identity on MCP/API calls: none locally; aws-iam exercises STS-verified identity with real creds
+  TOOL_AUTH: ${TOOL_AUTH:-none}
+
+x-tool-auth: &tool-auth
+  TOOL_AUTH: ${TOOL_AUTH:-none}
+  TOOL_ALLOWED_ROLES: ${TOOL_ALLOWED_ROLES:-}
+  TOOL_ALLOWED_ACCOUNT: ${TOOL_ALLOWED_ACCOUNT:-}
+  # Column-level encryption of personal data (pgcrypto). Dev key only; AWS uses a KMS-backed secret.
+  DATA_KEY: ${DATA_KEY:-argus-dev-data-key-change-me}
+
+x-otel-env: &otel-env
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+  DEPLOY_ENV: local
+
+x-mcp-env: &mcp-env
+  MCP_AIS_URL: http://mcp-ais:8000/mcp
+  MCP_REGISTRY_URL: http://mcp-registry:8000/mcp
+  MCP_GEO_URL: http://mcp-geo:8000/mcp
+  MCP_IMAGERY_URL: http://mcp-imagery:8000/mcp
+  API_URL: http://api:8000
+  SCENARIO_END: ${SCENARIO_END:-2026-09-01T08:00:00Z}
+  AIS_MODE: ${AIS_MODE:-replay}
+  SANCTIONS_SOURCE: ${OPENSANCTIONS_API_KEY:+opensanctions}
+
+services:
+  # ---------------- data ----------------
+  postgis:
+    image: ${POSTGIS_IMAGE:-postgis/postgis:17-3.5}  # official image is amd64-only; Apple Silicon: POSTGIS_IMAGE=imresamu/postgis:17-3.5
+    environment: {POSTGRES_USER: argus, POSTGRES_PASSWORD: argus, POSTGRES_DB: argus}
+    volumes:
+      - ./data/sql:/docker-entrypoint-initdb.d:ro
+      - pgdata:/var/lib/postgresql/data
+    ports: ["5432:5432"]
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U argus -d argus"], interval: 5s, timeout: 3s, retries: 20}
+
+  redis:
+    image: redis:7.4-alpine
+    ports: ["6379:6379"]
+    healthcheck: {test: ["CMD", "redis-cli", "ping"], interval: 5s, timeout: 3s, retries: 20}
+
+  ais-replay:
+    build: {context: ., dockerfile: services/ais-replay/Dockerfile}
+    environment:
+      DATABASE_URL: postgresql://argus:argus@postgis:5432/argus
+      REDIS_URL: redis://redis:6379/0
+      AIS_MODE: ${AIS_MODE:-replay}
+      AISSTREAM_API_KEY: ${AISSTREAM_API_KEY:-}
+      REPLAY_SPEED: ${REPLAY_SPEED:-60}
+      REPLAY_LOOP: ${REPLAY_LOOP:-true}
+      DATA_KEY: ${DATA_KEY:-argus-dev-data-key-change-me}
+      SCENARIO_FILE: ${SCENARIO_FILE:-/app/data/scenarios/east_med_baseline.yaml}
+      WATCH_AREAS: ${WATCH_AREAS:-all}
+    volumes: [shared-data:/app/shared]  # outputs only; /app/data (scenarios, sql) stays in the image
+    depends_on: {postgis: {condition: service_healthy}, redis: {condition: service_healthy}}
+
+  # Positions archiver: exports expired daily partitions to Parquet, then drops them. Run on demand:
+  #   docker compose run --rm archiver            (ARCHIVE_DIR locally; ARCHIVE_BUCKET on AWS)
+  archiver:
+    build: {context: ., dockerfile: services/archiver/Dockerfile}
+    profiles: [maintenance]
+    environment:
+      DATABASE_URL: postgresql://argus:argus@postgis:5432/argus
+      ARCHIVE_DIR: /app/shared/archive
+      HOT_DAYS: ${HOT_DAYS:-}
+      DRY_RUN: ${DRY_RUN:-false}
+    volumes: [shared-data:/app/shared]
+    depends_on: {postgis: {condition: service_healthy}}
+
+  # ---------------- MCP servers ----------------
+  mcp-ais: &mcp
+    build: {context: ., dockerfile: mcp-servers/Dockerfile}
+    environment:
+      <<: [*otel-env, *tool-auth]
+      MCP_SERVER: ais
+      MCP_PORT: "8000"
+      DATABASE_URL: postgresql://argus:argus@postgis:5432/argus
+    ports: ["8001:8000"]
+    depends_on: {postgis: {condition: service_healthy}}
+  mcp-registry:
+    <<: *mcp
+    environment:
+      <<: [*otel-env, *tool-auth]
+      MCP_SERVER: registry
+      MCP_PORT: "8000"
+      DATABASE_URL: postgresql://argus:argus@postgis:5432/argus
+      OPENSANCTIONS_API_KEY: ${OPENSANCTIONS_API_KEY:-}
+    ports: ["8002:8000"]
+  mcp-geo:
+    <<: *mcp
+    environment:
+      <<: [*otel-env, *tool-auth]
+      MCP_SERVER: geo
+      MCP_PORT: "8000"
+      DATABASE_URL: postgresql://argus:argus@postgis:5432/argus
+      GEO_USE_OSM: ${GEO_USE_OSM:-false}
+    ports: ["8003:8000"]
+  mcp-imagery:
+    <<: *mcp
+    environment:
+      <<: [*otel-env, *tool-auth]
+      MCP_SERVER: imagery
+      MCP_PORT: "8000"
+      DATABASE_URL: postgresql://argus:argus@postgis:5432/argus
+      IMAGERY_OFFLINE: ${IMAGERY_OFFLINE:-false}
+    ports: ["8004:8000"]
+
+  # ---------------- agents ----------------
+  agent-watch: &agent
+    build: {context: ., dockerfile: agents/Dockerfile, args: {AGENT: watch, REQS: requirements-strands.txt, GIT_SHA: '${GIT_SHA:-unknown}'}}
+    environment:
+      <<: [*aws-env, *otel-env, *mcp-env]
+      A2A_PORT: "9000"
+      A2A_PUBLIC_URL: http://agent-watch:9000
+    volumes: ["${HOME}/.aws:/root/.aws:ro"]
+    ports: ["9001:9000"]
+    depends_on: {mcp-ais: {condition: service_healthy}, mcp-geo: {condition: service_healthy}, api: {condition: service_healthy}}
+  agent-investigator:
+    <<: *agent
+    build: {context: ., dockerfile: agents/Dockerfile, args: {AGENT: investigator, REQS: requirements-langgraph.txt, GIT_SHA: '${GIT_SHA:-unknown}'}}
+    environment:
+      <<: [*aws-env, *otel-env, *mcp-env]
+      A2A_PORT: "9000"
+      A2A_PUBLIC_URL: http://agent-investigator:9000/
+    ports: ["9002:9000"]
+    depends_on: {mcp-ais: {condition: service_healthy}, mcp-registry: {condition: service_healthy}, mcp-geo: {condition: service_healthy}}
+  agent-tasking:
+    <<: *agent
+    build: {context: ., dockerfile: agents/Dockerfile, args: {AGENT: tasking, REQS: requirements-strands.txt, GIT_SHA: '${GIT_SHA:-unknown}'}}
+    environment:
+      <<: [*aws-env, *otel-env, *mcp-env]
+      A2A_PORT: "9000"
+      A2A_PUBLIC_URL: http://agent-tasking:9000
+    ports: ["9003:9000"]
+    depends_on: {mcp-imagery: {condition: service_healthy}, mcp-geo: {condition: service_healthy}}
+  agent-orchestrator:
+    <<: *agent
+    build: {context: ., dockerfile: agents/Dockerfile, args: {AGENT: orchestrator, REQS: requirements-strands.txt, GIT_SHA: '${GIT_SHA:-unknown}'}}
+    environment:
+      <<: [*aws-env, *otel-env, *mcp-env]
+      A2A_WATCH_URL: http://agent-watch:9000
+      A2A_INVESTIGATOR_URL: http://agent-investigator:9000
+      ARGUS_NO_REGISTRY: "1"  # local agents call each other by URL, never the AWS Agent Registry
+      A2A_TASKING_URL: http://agent-tasking:9000
+      A2A_AUTH: none
+      AGENTCORE_MEMORY_ID: ${AGENTCORE_MEMORY_ID:-}
+      PORT: "8080"
+    ports: ["8080:8080"]
+    depends_on: [agent-watch, agent-investigator, agent-tasking]
+
+  # ---------------- platform ----------------
+  api:
+    build: {context: ., dockerfile: services/api/Dockerfile}
+    environment:
+      <<: [*otel-env, *tool-auth]
+      DATABASE_URL: postgresql://argus:argus@postgis:5432/argus
+      REDIS_URL: redis://redis:6379/0
+      JOB_BACKEND: redis
+      AUTO_INVESTIGATE_SEVERITIES: ${AUTO_INVESTIGATE_SEVERITIES:-high}
+      ORCHESTRATOR_MODE: local
+      ORCHESTRATOR_URL: http://agent-orchestrator:8080
+      SCENARIO_END: ${SCENARIO_END:-2026-09-01T08:00:00Z}
+      AIS_MODE: ${AIS_MODE:-replay}
+    volumes: [shared-data:/app/shared:ro]
+    ports: ["8000:8000"]
+    depends_on: {postgis: {condition: service_healthy}, redis: {condition: service_healthy}}
+  # Job worker: sweeps (Watch agent over A2A) and investigations (orchestrator), retries, DLQ,
+  # progress events. Also the local sweep scheduler when SWEEP_INTERVAL_MIN > 0.
+  worker:
+    # The API image's HEALTHCHECK probes :8000, which the worker does not serve.
+    healthcheck: {disable: true}
+    build: {context: ., dockerfile: services/api/Dockerfile}
+    command: ["python", "worker.py"]
+    environment:
+      <<: [*aws-env, *otel-env, *tool-auth]
+      DATABASE_URL: postgresql://argus:argus@postgis:5432/argus
+      REDIS_URL: redis://redis:6379/0
+      JOB_BACKEND: redis
+      ORCHESTRATOR_MODE: local
+      ORCHESTRATOR_URL: http://agent-orchestrator:8080
+      A2A_WATCH_URL: http://agent-watch:9000
+      ARGUS_NO_REGISTRY: "1"  # local agents call each other by URL, never the AWS Agent Registry
+      A2A_AUTH: none
+      SWEEP_INTERVAL_MIN: ${SWEEP_INTERVAL_MIN:-0}
+      SWEEP_HOURS: ${SWEEP_HOURS:-12}
+      SCENARIO_END: ${SCENARIO_END:-2026-09-01T08:00:00Z}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+      AIS_MODE: ${AIS_MODE:-replay}
+    depends_on: {postgis: {condition: service_healthy}, redis: {condition: service_healthy}}
+
+  ui:
+    build: {context: ., dockerfile: services/ui/Dockerfile}
+    ports: ["8088:80"]
+    depends_on: [api]
+
+  # ---------------- observability ----------------
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.128.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes: ["${OTEL_CONFIG:-./observability/otel-collector.yaml}:/etc/otelcol/config.yaml:ro"]
+    ports: ["4317:4317", "4318:4318", "8889:8889"]
+    depends_on: [tempo, loki]
+  tempo:
+    image: grafana/tempo:2.8.1
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes: ["./observability/tempo.yaml:/etc/tempo.yaml:ro", "tempo-data:/var/tempo"]
+    ports: ["3200:3200"]
+  loki:
+    image: grafana/loki:3.5.0
+    command: ["-config.file=/etc/loki.yaml"]
+    volumes: ["./observability/loki.yaml:/etc/loki.yaml:ro", "loki-data:/loki"]
+    ports: ["3100:3100"]
+  prometheus:
+    image: prom/prometheus:v3.4.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--web.enable-remote-write-receiver", "--enable-feature=exemplar-storage"]
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports: ["9090:9090"]
+  grafana:
+    image: grafana/grafana:12.0.2
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_FEATURE_TOGGLES_ENABLE: traceqlEditor,traceToMetrics
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3000:3000"]
+    depends_on: [prometheus, tempo, loki]
+
+volumes:
+  pgdata: {}
+  shared-data: {}
+  tempo-data: {}
+  loki-data: {}

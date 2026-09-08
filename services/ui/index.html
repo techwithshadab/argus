@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Argus: Dark Vessel Investigation</title>
+<link href="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.css" rel="stylesheet">
+<script src="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0F1B2B;--panel:#152438;--panel2:#1B2D45;--line:#27394F;--ink:#E6EDF5;--muted:#8FA3B8;--amber:#E8A33D;--red:#E0604F;--cyan:#5AC8D8;--green:#5FB88A;--white:#FFFFFF}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"IBM Plex Sans",system-ui,sans-serif;font-size:14px;height:100vh;display:grid;grid-template-columns:1fr minmax(360px,34vw);grid-template-rows:52px 1fr;overflow:hidden}
+header{grid-column:1/3;display:flex;align-items:center;gap:.9rem;padding:0 .9rem;border-bottom:1px solid var(--line);background:var(--panel);white-space:nowrap;overflow:hidden;min-width:0}
+header .status{min-width:0;overflow:hidden;text-overflow:ellipsis}
+@media (max-width:1250px){.legend{display:none}}
+@media (max-width:1050px){header .status span:nth-child(3){display:none}}
+header h1{font-size:1rem;font-weight:600;margin:0}
+.mono{font-family:"IBM Plex Mono",monospace}
+.status{color:var(--muted);font-size:.85rem;display:flex;gap:.9rem;align-items:center}
+.status b{color:var(--ink);font-weight:500}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:.35rem;vertical-align:middle;background:var(--muted)}
+.dot.ok{background:var(--green)}.dot.stalled{background:var(--red)}
+.legend{display:flex;gap:.8rem;color:var(--muted);font-size:.78rem;margin-left:auto}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:.3rem;vertical-align:middle}
+.legend i.ring{background:transparent;border:2px solid var(--red)}
+.legend i.dim{opacity:.35;background:var(--cyan)}
+.officer{color:var(--muted);font-size:.8rem}
+.officer input{background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:3px;padding:.25rem .45rem;font:inherit;width:9rem;margin-left:.3rem}
+.officer input.warn{border-color:var(--amber)}
+.status select{background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:3px;padding:.15rem .3rem;font:inherit;font-weight:600;max-width:14rem}
+.status select option{background:#16202b;color:var(--ink)}
+button{background:transparent;color:var(--ink);border:1px solid var(--line);padding:.35rem .7rem;border-radius:3px;cursor:pointer;font:inherit}
+button:hover{border-color:var(--cyan)}
+button.primary{background:var(--amber);color:#1a1200;border-color:var(--amber);font-weight:600}
+button.small{padding:.15rem .5rem;font-size:.8rem}
+button.on{border-color:var(--cyan);color:var(--cyan)}
+button:disabled{opacity:.5;cursor:default}
+#map{grid-column:1;grid-row:2;position:relative}
+.maptools{position:absolute;top:10px;left:10px;z-index:5;display:flex;flex-direction:column;gap:.4rem}
+.maptools .box{background:rgba(21,36,56,.92);border:1px solid var(--line);border-radius:4px;padding:.45rem .6rem;font-size:.8rem;color:var(--muted)}
+.maptools label{display:block;cursor:pointer;margin:.15rem 0}
+.maptools input{margin-right:.35rem;vertical-align:middle}
+.maptools .track{display:none;align-items:center;gap:.5rem;color:var(--ink)}
+.maptools .track.on{display:flex}
+aside{grid-column:2;grid-row:2;display:flex;flex-direction:column;border-left:1px solid var(--line);background:var(--panel);min-height:0}
+.tabs{display:flex;border-bottom:1px solid var(--line)}
+.tabs button{flex:1;border:0;border-bottom:2px solid transparent;border-radius:0;padding:.6rem .3rem;color:var(--muted);font-size:.85rem}
+.tabs button.active{color:var(--ink);border-bottom-color:var(--amber)}
+.tabs .n{display:inline-block;min-width:1.3rem;padding:0 .3rem;border-radius:8px;background:var(--panel2);font-size:.72rem;margin-left:.3rem;color:var(--ink)}
+.tabs .n.high{background:var(--red);color:#fff}
+.pane{display:none;overflow:auto;padding:.9rem;flex:1;min-height:0}
+.pane.active{display:block}
+.filters{display:flex;flex-wrap:wrap;gap:.4rem;align-items:center;margin-bottom:.6rem;font-size:.8rem;color:var(--muted)}
+.pane{overflow-x:hidden}
+.alert .row{flex-wrap:wrap}
+.tabs button{white-space:nowrap;padding:.6rem .2rem}
+.filters input[type=text],.filters select{background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:3px;padding:.25rem .4rem;font:inherit;font-size:.8rem}
+.chip{border:1px solid var(--line);border-radius:10px;padding:.05rem .5rem;cursor:pointer;color:var(--muted)}
+.chip.on{color:var(--ink);border-color:var(--ink)}
+.chip.high.on{border-color:var(--red);color:var(--red)}.chip.medium.on{border-color:var(--amber);color:var(--amber)}
+.hint{color:var(--muted);font-size:.75rem;margin:.4rem 0 .6rem;white-space:normal}
+.alert{border:1px solid var(--line);border-left:3px solid var(--amber);padding:.6rem .8rem;margin:.5rem 0;border-radius:3px;background:rgba(255,255,255,.02);cursor:pointer}
+.alert.high{border-left-color:var(--red)}
+.alert.low{border-left-color:var(--muted)}
+.alert.selected{outline:1px solid var(--cyan);background:rgba(90,200,216,.06)}
+.alert .row{display:flex;justify-content:space-between;gap:.5rem;align-items:baseline}
+.alert .kind{font-weight:600}
+.alert .meta{color:var(--muted);font-size:.8rem}
+.alert p{margin:.35rem 0;color:#c9d5e2}
+.alert .actions{display:flex;gap:.4rem;margin-top:.4rem;flex-wrap:wrap}
+.alert details{margin-top:.3rem;font-size:.8rem;color:var(--muted)}
+.alert details ul{margin:.2rem 0;padding-left:1.1rem}
+.badge{display:inline-block;padding:.02rem .35rem;border-radius:2px;font-size:.7rem;letter-spacing:.03em;margin-left:.4rem;vertical-align:middle;border:1px solid var(--line);color:var(--muted)}
+.badge.draft{border-color:var(--amber);color:var(--amber)}
+.badge.accepted{border-color:var(--green);color:var(--green)}
+.badge.rejected{border-color:var(--red);color:var(--red)}
+.badge.running{border-color:var(--cyan);color:var(--cyan)}
+.badge.failed{border-color:var(--red);color:var(--red)}
+.inv{border:1px solid var(--line);padding:.5rem .7rem;margin:.4rem 0;border-radius:3px;cursor:pointer;display:grid;grid-template-columns:1fr auto;gap:.2rem .6rem}
+.inv.selected{outline:1px solid var(--cyan)}
+.inv .h{font-weight:500}
+.inv .meta{color:var(--muted);font-size:.78rem;grid-column:1/3}
+.report{border:1px solid var(--line);padding:.8rem;border-radius:3px;background:rgba(90,200,216,.05);margin-bottom:1rem}
+.report .headline{font-weight:600;font-size:1rem;margin-bottom:.4rem}
+.report .tag{display:inline-block;border:1px solid var(--line);padding:.05rem .4rem;border-radius:2px;font-size:.75rem;margin-right:.3rem;color:var(--muted)}
+.report ul{padding-left:1.1rem;margin:.3rem 0}
+.report li{margin-bottom:.2rem}
+.report details{margin-top:.5rem}
+.report summary{cursor:pointer;color:var(--muted)}
+.report .actions{display:flex;gap:.4rem;margin-top:.6rem;flex-wrap:wrap}
+.steps{list-style:none;padding:0;margin:.5rem 0}
+.steps li{padding:.2rem 0;color:var(--muted)}
+.steps li.done{color:var(--green)}.steps li.now{color:var(--amber)}
+.bar{height:3px;background:var(--panel2);border-radius:2px;overflow:hidden;margin:.4rem 0}
+.bar i{display:block;height:100%;width:30%;background:var(--amber);animation:slide 1.6s infinite linear}
+@keyframes slide{from{transform:translateX(-100%)}to{transform:translateX(340%)}}
+.task{border:1px solid var(--line);padding:.5rem .7rem;margin:.4rem 0;border-radius:3px}
+.task .actions{display:flex;gap:.4rem;margin-top:.3rem}
+table{width:100%;border-collapse:collapse;font-size:.78rem}
+th,td{text-align:left;padding:.3rem .4rem;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:500}
+.empty{color:var(--muted)}
+.maplibregl-popup-content{background:var(--panel);color:var(--ink);font-family:inherit;border:1px solid var(--line);font-size:.8rem}
+.maplibregl-popup-tip{border-top-color:var(--panel)!important}
+#toasts{position:fixed;right:14px;bottom:14px;display:flex;flex-direction:column;gap:.4rem;z-index:20}
+.toast{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--green);padding:.5rem .8rem;border-radius:3px;font-size:.85rem;min-width:220px;box-shadow:0 4px 16px rgba(0,0,0,.4)}
+.toast.err{border-left-color:var(--red)}
+kbd{border:1px solid var(--line);border-radius:3px;padding:0 .3rem;font-family:"IBM Plex Mono",monospace;font-size:.72rem;color:var(--ink)}
+@media print{body{display:block;height:auto;overflow:visible;background:#fff;color:#000}header,#map,.tabs,.filters,.actions,.hint,#toasts,.inv{display:none!important}aside{border:0}.pane{display:none}.pane#pane-investigations{display:block}.report{border:1px solid #999;background:#fff}.report .tag,.badge{color:#333;border-color:#999}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Argus</h1>
+  <span class="status">
+    <span><span class="dot" id="feedDot"></span><b id="feedMode">starting</b> <span id="feedAge"></span></span>
+    <span>clock <b class="mono" id="clock">--</b></span>
+    <span>watching <select id="areaSel" title="Watched area: fits the map and filters the vessels shown"><option value="">--</option></select> <span id="vesselCount"></span></span>
+  </span>
+  <span class="legend"><span><i style="background:var(--cyan)"></i>vessel</span><span><i style="background:var(--amber)"></i>alerted</span><span><i class="ring"></i>under investigation</span><span><i class="dim"></i>stale</span></span>
+  <label class="officer">officer<input id="officer" placeholder="required to review" title="Your watch officer id. Recorded on every decision you make."></label>
+  <button id="sweep" class="primary" title="Ask the Watch agent to review the last 12 hours">Sweep 12 h</button>
+</header>
+
+<div id="map">
+  <div class="maptools">
+    <div class="box">
+      <label><input type="checkbox" id="lyZones" checked>zones</label>
+      <label><input type="checkbox" id="lyLabels" checked>vessel names</label>
+      <label><input type="checkbox" id="lyArea" checked>watched area</label>
+    </div>
+    <div class="box track" id="trackBox"><span>track <b id="trackName"></b> <span class="mono" id="trackSpan"></span></span><button class="small" onclick="clearTrack()">Clear (Esc)</button></div>
+  </div>
+</div>
+
+<aside>
+  <div class="tabs">
+    <button data-tab="alerts" class="active">Alerts<span class="n" id="nAlerts">0</span></button>
+    <button data-tab="investigations">Investigations<span class="n" id="nInv">0</span></button>
+    <button data-tab="tasking">Tasking<span class="n" id="nTask">0</span></button>
+    <button data-tab="audit">Audit</button>
+  </div>
+
+  <div class="pane active" id="pane-alerts">
+    <div class="filters">
+      <span class="chip high on" data-sev="high">high</span><span class="chip medium on" data-sev="medium">medium</span><span class="chip on" data-sev="low">low</span>
+      <label><input type="checkbox" id="fHideReviewed"> hide reviewed</label>
+      <select id="fSort"><option value="newest">newest</option><option value="severity">severity</option><option value="score">score</option><option value="vessel">vessel</option></select>
+      <input type="text" id="fSearch" placeholder="vessel, kind..." size="12">
+    </div>
+    <div class="hint"><kbd>j</kbd>/<kbd>k</kbd> select · <kbd>i</kbd> investigate · <kbd>t</kbd> track · <kbd>Shift+A</kbd> accept · <kbd>Shift+R</kbd> reject · <kbd>Esc</kbd> clear</div>
+    <div id="alerts"><span class="empty">No alerts yet. Run a watch sweep or wait for the replay.</span></div>
+  </div>
+
+  <div class="pane" id="pane-investigations">
+    <div id="investigation"></div>
+    <div class="hint" id="invListHint">All investigations, newest first. Click one to open its report.</div>
+    <div id="invList"><span class="empty">No investigations yet. Select an alert and click Investigate.</span></div>
+  </div>
+
+  <div class="pane" id="pane-tasking">
+    <div class="hint">Collection requests proposed by the Tasking agent. Nothing is tasked until a watch officer approves it.</div>
+    <div id="tasking"><span class="empty">None.</span></div>
+  </div>
+
+  <div class="pane" id="pane-audit">
+    <div class="filters"><input type="text" id="auditSearch" placeholder="filter by vessel, actor, action" size="28"><button class="small" onclick="loadAudit()">Refresh</button></div>
+    <div id="audit"><span class="empty">No events yet.</span></div>
+  </div>
+</aside>
+<div id="toasts"></div>
+
+<script>
+const API = '/api';
+const GAP_MINUTES = 20;          // a silence longer than this is drawn as a dashed gap on a track
+const STALE_MINUTES = 30;        // vessels not heard from for this long (scenario time) are dimmed
+const state = {vessels:{}, alerts:[], investigations:[], tasking:[], area:null, selected:null, track:null,
+               filters:{sev:new Set(['high','medium','low']), hideReviewed:false, sort:'newest', q:''},
+               lastStreamAt:0, latestTs:null, openInv:null, poll:null};
+
+// ---------- helpers ----------
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const hhmm = ts => ts ? String(ts).slice(11,16)+'Z' : '';
+const dmy = ts => ts ? String(ts).replace('T',' ').slice(0,16)+'Z' : '';
+function toast(msg, err){ const t=document.createElement('div'); t.className='toast'+(err?' err':''); t.textContent=msg; $('toasts').appendChild(t); setTimeout(()=>t.remove(), err?6000:3000); }
+async function get(path){ const r = await fetch(API+path); if(!r.ok) throw new Error(`${path} ${r.status}`); return r.json(); }
+async function post(path, body){
+  const r = await fetch(API+path, {method:'POST', headers:{'Content-Type':'application/json','X-Watch-Officer':officer()}, body: body ? JSON.stringify(body) : undefined});
+  if(!r.ok){ let d=''; try{ d=(await r.json()).detail||''; }catch(e){} throw new Error(d||`${path} ${r.status}`); }
+  return r.json();
+}
+function vesselName(mmsi){ return state.vessels[mmsi]?.name || String(mmsi); }
+function reviewBadge(r){ return r.review_state==='draft' ? '<span class="badge draft">AI draft</span>' : `<span class="badge ${esc(r.review_state)}">${esc(r.review_state)} by ${esc(r.reviewed_by||'?')}</span>`; }
+
+// ---------- officer identity: the load balancer's sign-in on AWS, a typed id locally ----------
+const officerEl = $('officer');
+try { officerEl.value = localStorage.getItem('argus.officer') || ''; } catch (e) {}
+function officer(){ return officerEl.value.trim(); }
+function officerWarn(){ officerEl.classList.toggle('warn', !officer()); }
+officerEl.addEventListener('input', () => { try { localStorage.setItem('argus.officer', officer()); } catch (e) {} officerWarn(); });
+get('/whoami').then(w => {
+  if (w.mode !== 'oidc') return;
+  officerEl.value = w.officer || ''; officerEl.readOnly = true;
+  officerEl.title = 'Signed in through the load balancer; recorded on every decision you make.';
+  officerWarn();
+}).catch(() => {});
+officerWarn();
+function requireOfficer(){ if(officer()) return true; toast('Enter your officer id first (top right). Decisions are recorded against it.', true); officerEl.focus(); return false; }
+
+// ---------- tabs ----------
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
+function showTab(name){ document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active', b.dataset.tab===name)); document.querySelectorAll('.pane').forEach(p=>p.classList.toggle('active', p.id==='pane-'+name)); }
+
+// ---------- map ----------
+// Basemap. The map runs on its own plain dark style from the first frame, so vessels, zones and
+// tracks paint immediately. CARTO's dark vector style (free, no key) is fetched separately and its
+// sources and layers are merged in *underneath* ours as they arrive. No setStyle: swapping styles
+// made MapLibre drop our layers or hold every frame until the basemap's sprite and tiles loaded.
+const BASEMAP = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
+const PLAIN = {version:8, glyphs:'https://tiles.basemaps.cartocdn.com/fonts/{fontstack}/{range}.pbf', sources:{}, layers:[{id:'bg',type:'background',paint:{'background-color':'#0b1420'}}]};
+const map = new maplibregl.Map({container:'map', style:PLAIN, center:[33.4, 34.1], zoom:7.4, attributionControl:{compact:true}});
+let styleArrived = false;
+function mergeBasemap(style){
+  for(const [id, src] of Object.entries(style.sources)) if(!map.getSource(id)) map.addSource(id, src);
+  const before = map.getLayer('area-line') ? 'area-line' : undefined;
+  for(const layer of style.layers){
+    if(layer.type==='background' || map.getLayer(layer.id)) continue;
+    if(layer.layout && layer.layout['icon-image']) continue;        // needs the sprite we skip
+    try { map.addLayer(layer, before); } catch(e) { console.warn('basemap layer skipped', layer.id, e.message); }
+  }
+  styleArrived = true;
+}
+const basemapReady = fetch(BASEMAP).then(r => r.json()).catch(() => { toast('Basemap unavailable; showing a plain chart.', true); return null; });
+map.addControl(new maplibregl.NavigationControl({showCompass:false}), 'top-right');
+map.addControl(new maplibregl.ScaleControl({unit:'nautical'}), 'bottom-right');
+let mapReady = false;
+const EMPTY = {type:'FeatureCollection',features:[]};
+// 'style.load' fires as soon as the (inline) style is parsed; 'load' would wait for every basemap tile.
+map.on('style.load', () => {
+  if(map.getSource('vessels')) return;
+  map.addSource('area',{type:'geojson',data:EMPTY});
+  map.addLayer({id:'area-line',type:'line',source:'area',paint:{'line-color':['case',['boolean',['get','selected'],false],'#E8A33D','#8FA3B8'],'line-width':1,'line-dasharray':[1,3]}});
+  map.addLayer({id:'area-label',type:'symbol',source:'area',filter:['==',['geometry-type'],'Point'],layout:{'text-field':['get','name'],'text-size':11,'text-font':['Open Sans Regular'],'text-anchor':'top-left','text-offset':[0.4,0.4]},paint:{'text-color':'#8FA3B8'}});
+  map.addSource('zones',{type:'geojson',data:EMPTY});
+  const zc=['match',['get','kind'],'protected_cable','#5AC8D8','exclusion','#E0604F','anchorage','#5FB88A','#8FA3B8'];
+  map.addLayer({id:'zones-fill',type:'fill',source:'zones',paint:{'fill-color':zc,'fill-opacity':0.12}});
+  map.addLayer({id:'zones-line',type:'line',source:'zones',paint:{'line-color':zc,'line-width':1.2,'line-dasharray':[3,2]}});
+  map.addLayer({id:'zones-label',type:'symbol',source:'zones',layout:{'text-field':['get','name'],'text-size':11,'text-font':['Open Sans Regular']},paint:{'text-color':'#8FA3B8'}});
+  map.addSource('track',{type:'geojson',data:EMPTY});
+  map.addLayer({id:'track-line',type:'line',source:'track',filter:['==',['get','kind'],'leg'],paint:{'line-color':'#E8A33D','line-width':2,'line-opacity':.9}});
+  map.addLayer({id:'track-gap',type:'line',source:'track',filter:['==',['get','kind'],'gap'],paint:{'line-color':'#E0604F','line-width':3,'line-dasharray':[1.5,1.5]}});
+  map.addLayer({id:'track-gap-ends',type:'circle',source:'track',filter:['==',['get','kind'],'gapend'],paint:{'circle-radius':4,'circle-color':'#E0604F'}});
+  map.addLayer({id:'track-gap-label',type:'symbol',source:'track',filter:['==',['get','kind'],'gaplabel'],layout:{'text-field':['get','label'],'text-size':11,'text-font':['Open Sans Regular'],'text-anchor':'bottom','text-offset':[0,-0.8],'text-allow-overlap':true},paint:{'text-color':'#E0604F','text-halo-color':'#0F1B2B','text-halo-width':1.5}});
+  map.addLayer({id:'track-points',type:'circle',source:'track',filter:['==',['get','kind'],'point'],paint:{'circle-radius':3,'circle-color':'#E8A33D','circle-opacity':.8}});
+  map.addLayer({id:'track-ends',type:'symbol',source:'track',filter:['==',['get','kind'],'end'],layout:{'text-field':['get','label'],'text-size':11,'text-font':['Open Sans Regular'],'text-offset':[0,1.4],'text-anchor':'top'},paint:{'text-color':'#E8A33D','text-halo-color':'#0F1B2B','text-halo-width':1.5}});
+  map.addLayer({id:'track-ends-dot',type:'circle',source:'track',filter:['==',['get','kind'],'end'],paint:{'circle-radius':5,'circle-color':'#0F1B2B','circle-stroke-color':'#E8A33D','circle-stroke-width':2}});
+  map.addSource('vessels',{type:'geojson',data:EMPTY});
+  map.addLayer({id:'vessel-ring',type:'circle',source:'vessels',filter:['all',['==',['geometry-type'],'Point'],['==',['get','investigating'],true]],paint:{'circle-radius':13,'circle-color':'transparent','circle-stroke-color':'#E0604F','circle-stroke-width':2}});
+  map.addLayer({id:'vessel-select',type:'circle',source:'vessels',filter:['all',['==',['geometry-type'],'Point'],['==',['get','selected'],true]],paint:{'circle-radius':11,'circle-color':'rgba(90,200,216,.18)','circle-stroke-color':'#fff','circle-stroke-width':1.5}});
+  // Course vector: a line from the vessel along its course, longer when faster (like a radar display).
+  map.addLayer({id:'vessel-course',type:'line',source:'vessels',filter:['==',['geometry-type'],'LineString'],paint:{'line-color':['get','color'],'line-width':2,'line-opacity':['case',['get','stale'],0.3,0.9]}});
+  map.addLayer({id:'vessels',type:'circle',source:'vessels',filter:['==',['geometry-type'],'Point'],paint:{'circle-radius':6,'circle-color':['get','color'],'circle-stroke-color':'#0F1B2B','circle-stroke-width':1.5,'circle-opacity':['case',['get','stale'],0.35,1]}});
+  map.addLayer({id:'vessel-labels',type:'symbol',source:'vessels',filter:['==',['geometry-type'],'Point'],layout:{'text-field':['get','name'],'text-size':11,'text-font':['Open Sans Regular'],'text-offset':[0,1.1],'text-anchor':'top','text-optional':true},paint:{'text-color':'#E6EDF5','text-halo-color':'#0F1B2B','text-halo-width':1,'text-opacity':['case',['get','stale'],0.5,1]}});
+  map.on('click','vessels', e => { const p=e.features[0].properties; selectVessel(Number(p.mmsi), {fly:false}); showTab('alerts'); });
+  map.on('mouseenter','vessels', ()=>map.getCanvas().style.cursor='pointer'); map.on('mouseleave','vessels', ()=>map.getCanvas().style.cursor='');
+  const pop = new maplibregl.Popup({closeButton:false, closeOnClick:false});
+  map.on('mouseenter','vessels', e => { const p=e.features[0].properties; pop.setLngLat(e.lngLat).setHTML(`<b>${esc(p.name)}</b> · MMSI ${p.mmsi}<br>${p.sog ?? '?'} kn · course ${p.cog ?? '?'}° · ${esc(p.nav_status||'')}<br><span style="color:#8FA3B8">last report ${dmy(p.ts)}</span>`).addTo(map); });
+  map.on('mouseleave','vessels', () => pop.remove());
+  map.on('mouseenter','track-points', e => { const p=e.features[0].properties; map.getCanvas().style.cursor='crosshair'; pop.setLngLat(e.lngLat).setHTML(`${dmy(p.ts)}<br>${p.sog ?? '?'} kn · course ${p.cog ?? '?'}° · ${esc(p.nav_status||'')}`).addTo(map); });
+  map.on('mouseleave','track-points', () => { map.getCanvas().style.cursor=''; pop.remove(); });
+  mapReady = true;
+  loadZones(); renderArea(); renderVessels(); if(state.track) drawTrack(state.track);
+  if(!state.fitted && state.area){ state.fitted = true; fitAreas(false); }  // the area may have arrived before the map was ready
+  // Merge the basemap only after our own layers have painted once, so the first frame is never blank.
+  // The position stream can keep the map from ever going idle (a source update every second), so a
+  // short timer is the fallback; whichever fires first merges, once.
+  let merged = false;
+  const mergeOnce = () => { if(merged) return; merged = true; basemapReady.then(style => { if(style) mergeBasemap(style); }); };
+  map.once('idle', mergeOnce); setTimeout(mergeOnce, 2500);
+});
+$('lyZones').onchange = e => ['zones-fill','zones-line','zones-label'].forEach(l => map.setLayoutProperty(l,'visibility', e.target.checked?'visible':'none'));
+$('lyLabels').onchange = e => map.setLayoutProperty('vessel-labels','visibility', e.target.checked?'visible':'none');
+$('lyArea').onchange = e => ['area-line','area-label'].forEach(l => map.setLayoutProperty(l,'visibility', e.target.checked?'visible':'none'));
+
+async function loadZones(){ try { map.getSource('zones').setData(await get('/zones')); } catch(e){ toast('zones unavailable: '+e.message, true); } }
+// ---------- watched areas: the scenario's box plus, in live mode, the catalogue areas the feed subscribes to ----------
+function areas(){ return state.area?.areas?.length ? state.area.areas : (state.area?.bbox ? [{name:state.area.name, label:state.area.name, bbox:state.area.bbox}] : []); }
+function areaFilter(){ return areas().find(a => a.name === state.areaFilter) || null; }
+function inArea(v, a){ const b=a.bbox; return v.lon >= b.min_lon && v.lon <= b.max_lon && v.lat >= b.min_lat && v.lat <= b.max_lat; }
+function ring(b){ return [[[b.min_lon,b.min_lat],[b.max_lon,b.min_lat],[b.max_lon,b.max_lat],[b.min_lon,b.max_lat],[b.min_lon,b.min_lat]]]; }
+function renderArea(){
+  if(!mapReady) return;
+  const sel = state.areaFilter, f = [];
+  areas().forEach(a => { const on = !sel || a.name===sel; f.push({type:'Feature',properties:{selected:a.name===sel},geometry:{type:'Polygon',coordinates:ring(a.bbox)}}); f.push({type:'Feature',properties:{name:(on?'watching: ':'')+(a.label||a.name)},geometry:{type:'Point',coordinates:[a.bbox.min_lon,a.bbox.max_lat]}}); });
+  map.getSource('area').setData({type:'FeatureCollection',features:f});
+}
+function fitAreas(animate=true){
+  const list = areaFilter() ? [areaFilter()] : areas(); if(!mapReady || !list.length) return;
+  const lons = list.flatMap(a => [a.bbox.min_lon, a.bbox.max_lon]), lats = list.flatMap(a => [a.bbox.min_lat, a.bbox.max_lat]);
+  // The first fit jumps: an animated fit at start-up is cut short by the basemap merge that follows the first idle frame.
+  map.fitBounds([[Math.min(...lons),Math.min(...lats)],[Math.max(...lons),Math.max(...lats)]], {padding:60, maxZoom:9, duration: animate ? 700 : 0});
+}
+const areaSel = $('areaSel');
+try { state.areaFilter = localStorage.getItem('argus.area') || ''; } catch (e) {}
+areaSel.addEventListener('change', () => { state.areaFilter = areaSel.value; try { localStorage.setItem('argus.area', state.areaFilter); } catch (e) {} renderArea(); renderVessels(); fitAreas(); });
+function renderAreaSelect(){
+  const list = areas(); const opts = list.length > 1 ? [{value:'', text:`all ${list.length} areas`}] : [];
+  list.forEach(a => opts.push({value:a.name, text:a.label||a.name}));
+  if(!opts.length) opts.push({value:'', text:'--'});
+  if(!opts.some(o => o.value===state.areaFilter)) state.areaFilter = '';
+  areaSel.innerHTML = opts.map(o => `<option value="${esc(o.value)}"${o.value===state.areaFilter?' selected':''}>${esc(o.text)}</option>`).join('');
+}
+
+function vesselState(mmsi){
+  const investigating = state.investigations.some(i => i.mmsi===mmsi && i.status==='running');
+  const alerted = state.alerts.some(a => a.mmsi===mmsi && a.status==='open' && a.review_state!=='rejected');
+  return {investigating, color: alerted ? '#E8A33D' : '#5AC8D8', selected: state.selected===mmsi};
+}
+function renderVessels(){
+  if(!mapReady) return;
+  const latest = state.latestTs ? Date.parse(state.latestTs) : 0;
+  const replay = state.area?.mode === 'replay';
+  const streaming = state.lastStreamAt && (Date.now() - state.lastStreamAt) < 30000;
+  const features = [];
+  const only = areaFilter();
+  Object.values(state.vessels).filter(v => v.lon != null && (!replay || !streaming || v.live) && (!only || inArea(v, only))).forEach(v => {
+    const s=vesselState(v.mmsi); const stale = latest && v.ts ? (latest - Date.parse(v.ts)) > STALE_MINUTES*60000 : false; const props={...v, ...s, stale};
+    features.push({type:'Feature',geometry:{type:'Point',coordinates:[v.lon,v.lat]},properties:props});
+    if(v.cog != null && (v.sog||0) > 0.5){ const nm = 0.6 * Math.min(v.sog, 25); const dLat = nm/60 * Math.cos(v.cog*Math.PI/180); const dLon = nm/60 * Math.sin(v.cog*Math.PI/180) / Math.cos(v.lat*Math.PI/180); features.push({type:'Feature',geometry:{type:'LineString',coordinates:[[v.lon,v.lat],[v.lon+dLon,v.lat+dLat]]},properties:{color:s.color, stale}}); }
+  });
+  map.getSource('vessels').setData({type:'FeatureCollection',features});
+  const n = features.filter(f => f.geometry.type==='Point').length; $('vesselCount').textContent = n ? `· ${n} vessels` : '';
+}
+async function loadVessels(){ try { (await get('/vessels')).forEach(v=>{ state.vessels[v.mmsi]={...v, ...(state.vessels[v.mmsi]||{})}; if(!state.latestTs || v.ts>state.latestTs) state.latestTs=v.ts; }); renderVessels(); renderAlerts(); } catch(e){ quiet('vessels unavailable: '+e.message); } }
+
+// ---------- selection ----------
+function selectVessel(mmsi, {fly=true}={}){
+  state.selected = mmsi; renderVessels();
+  const v = state.vessels[mmsi]; if(fly && v && mapReady) map.flyTo({center:[v.lon,v.lat], zoom:Math.max(map.getZoom(), 8.5), duration:600});
+  document.querySelectorAll('.alert').forEach(el => el.classList.toggle('selected', Number(el.dataset.mmsi)===mmsi));
+  const first = document.querySelector(`.alert[data-mmsi="${mmsi}"]`); if(first) first.scrollIntoView({block:'nearest'});
+}
+
+// ---------- track ----------
+async function toggleTrack(mmsi){ if(state.track && state.track.mmsi===mmsi){ clearTrack(); return; } await showTrack(mmsi); }
+async function showTrack(mmsi){
+  try {
+    const pts = await get(`/vessels/${mmsi}/track?hours=24`);
+    if(!pts.length){ toast('No positions in the last 24 h for '+vesselName(mmsi)); return; }
+    state.track = {mmsi, pts}; drawTrack(state.track);
+  } catch(e){ toast('track unavailable: '+e.message, true); }
+}
+function drawTrack(t){
+  if(!mapReady) return;
+  const f = [];
+  let gaps = 0;
+  for(let i=1;i<t.pts.length;i++){ const a=t.pts[i-1], b=t.pts[i]; const mins=(Date.parse(b.ts)-Date.parse(a.ts))/60000; const gap = mins>GAP_MINUTES; f.push({type:'Feature',properties:{kind:gap?'gap':'leg'},geometry:{type:'LineString',coordinates:[[a.lon,a.lat],[b.lon,b.lat]]}});
+    if(gap){ gaps++; f.push({type:'Feature',properties:{kind:'gaplabel',label:`silent ${Math.round(mins)} min · ${hhmm(a.ts)} to ${hhmm(b.ts)}`},geometry:{type:'Point',coordinates:[(a.lon+b.lon)/2,(a.lat+b.lat)/2]}}); f.push({type:'Feature',properties:{kind:'gapend'},geometry:{type:'Point',coordinates:[a.lon,a.lat]}}); f.push({type:'Feature',properties:{kind:'gapend'},geometry:{type:'Point',coordinates:[b.lon,b.lat]}}); } }
+  t.pts.forEach(p => f.push({type:'Feature',properties:{kind:'point',...p},geometry:{type:'Point',coordinates:[p.lon,p.lat]}}));
+  const s=t.pts[0], e=t.pts[t.pts.length-1];
+  f.push({type:'Feature',properties:{kind:'end',label:'start '+hhmm(s.ts)},geometry:{type:'Point',coordinates:[s.lon,s.lat]}});
+  f.push({type:'Feature',properties:{kind:'end',label:'latest '+hhmm(e.ts)},geometry:{type:'Point',coordinates:[e.lon,e.lat]}});
+  map.getSource('track').setData({type:'FeatureCollection',features:f});
+  const lons=t.pts.map(p=>p.lon), lats=t.pts.map(p=>p.lat);
+  map.fitBounds([[Math.min(...lons),Math.min(...lats)],[Math.max(...lons),Math.max(...lats)]], {padding:80, maxZoom:10, duration:700});
+  $('trackName').textContent = vesselName(t.mmsi); $('trackSpan').textContent = `${dmy(s.ts)} to ${hhmm(e.ts)} · ${t.pts.length} reports${gaps?` · ${gaps} silent period${gaps>1?'s':''}`:''}`; $('trackBox').classList.add('on');
+  document.querySelectorAll('button[data-track]').forEach(b => b.classList.toggle('on', Number(b.dataset.track)===t.mmsi));
+}
+function clearTrack(){ state.track=null; if(mapReady) map.getSource('track').setData(EMPTY); $('trackBox').classList.remove('on'); document.querySelectorAll('button[data-track]').forEach(b=>b.classList.remove('on')); }
+
+// ---------- live stream + feed status ----------
+function startStream(){
+  const es = new EventSource(API+'/stream');
+  es.addEventListener('position', e => { const p=JSON.parse(e.data); state.lastStreamAt=Date.now(); if(p.event){ if(p.event==='replay_complete') toast('Replay complete: the scenario has reached its end.'); return; } const v=state.vessels[p.mmsi]||{mmsi:p.mmsi,name:String(p.mmsi)}; Object.assign(v,p,{live:true}); state.vessels[p.mmsi]=v; if(!state.latestTs || p.ts>state.latestTs || state.area?.mode==='replay') state.latestTs=p.ts; $('clock').textContent = dmy(p.ts); renderVessels(); });
+  es.addEventListener('ping', () => { state.lastStreamAt = state.lastStreamAt || Date.now(); });
+  es.onerror = () => { $('feedDot').className='dot stalled'; $('feedAge').textContent='stream disconnected, retrying'; };
+  // Job progress: refresh the open investigation on every event about it; toast terminal states.
+  const ev = new EventSource(API+'/events');
+  ev.addEventListener('job', e => {
+    const j = JSON.parse(e.data);
+    if(j.investigation_id && j.investigation_id === state.openInv){ get(`/investigations/${j.investigation_id}`).then(renderInvestigation).catch(()=>{}); }
+    if(j.step==='job' && j.status==='succeeded'){ toast(j.kind==='sweep' ? 'Sweep finished' : `Report ready for ${vesselName(j.mmsi)}`); loadAlerts(); loadInvestigations(); loadTasking(); }
+    if(j.step==='job' && (j.status==='failed' || j.status==='dead')){ toast(`${j.kind} failed: ${j.detail||''}`, true); loadInvestigations(); }
+    if(j.step==='job' && j.status==='retrying'){ toast(`${j.kind}: ${j.detail||'retrying'}`, true); }
+    if(j.kind==='investigation' && j.step==='job' && j.status==='queued' && j.investigation_id && !state.openInv){ loadInvestigations(); }
+  });
+}
+async function loadArea(){ try { state.area = await get('/area'); renderAreaSelect(); renderArea(); renderVessels(); if(!state.fitted && mapReady){ state.fitted = true; fitAreas(false); } } catch(e){ renderAreaSelect(); } }
+function feedTick(){
+  const mode = state.area?.mode || 'starting'; $('feedMode').textContent = mode==='replay' ? 'replay' : mode==='live' ? 'live AIS' : mode;
+  const age = state.lastStreamAt ? (Date.now()-state.lastStreamAt)/1000 : null;
+  if(!state.lastStreamAt && state.latestTs) $('clock').textContent = dmy(state.latestTs) + ' (end of data)';
+  if(age===null){ $('feedDot').className='dot'; $('feedAge').textContent='waiting for positions'; }
+  else if(age < 30){ $('feedDot').className='dot ok'; $('feedAge').textContent = `last report ${Math.round(age)} s ago`; }
+  else { $('feedDot').className='dot stalled'; $('feedAge').textContent = `no reports for ${Math.round(age)} s`; }
+}
+setInterval(feedTick, 1000);
+
+// ---------- alerts ----------
+document.querySelectorAll('.chip[data-sev]').forEach(c => c.onclick = () => { c.classList.toggle('on'); c.classList.contains('on') ? state.filters.sev.add(c.dataset.sev) : state.filters.sev.delete(c.dataset.sev); renderAlerts(); });
+$('fHideReviewed').onchange = e => { state.filters.hideReviewed = e.target.checked; renderAlerts(); };
+$('fSort').onchange = e => { state.filters.sort = e.target.value; renderAlerts(); };
+$('fSearch').oninput = e => { state.filters.q = e.target.value.trim().toLowerCase(); renderAlerts(); };
+const SEV = {high:0, medium:1, low:2};
+function visibleAlerts(){
+  const f = state.filters;
+  let rows = state.alerts.filter(a => a.status!=='dismissed' && f.sev.has(a.severity) && (!f.hideReviewed || a.review_state==='draft'));
+  if(f.q) rows = rows.filter(a => (vesselName(a.mmsi)+' '+a.mmsi+' '+a.kind+' '+(a.details?.rationale||'')).toLowerCase().includes(f.q));
+  const s = f.sort;
+  rows.sort((a,b) => s==='severity' ? (SEV[a.severity]-SEV[b.severity]) || (b.score-a.score) : s==='score' ? b.score-a.score : s==='vessel' ? vesselName(a.mmsi).localeCompare(vesselName(b.mmsi)) : (b.created_at||'').localeCompare(a.created_at||''));
+  return rows;
+}
+function renderAlerts(){
+  const rows = visibleAlerts();
+  const drafts = state.alerts.filter(a=>a.status!=='dismissed' && a.review_state==='draft');
+  const n = $('nAlerts'); n.textContent = drafts.length; n.className = 'n' + (drafts.some(a=>a.severity==='high') ? ' high' : '');
+  $('alerts').innerHTML = rows.length ? rows.map(a=>`
+    <div class="alert ${esc(a.severity)}${state.selected===a.mmsi?' selected':''}" data-id="${a.id}" data-mmsi="${a.mmsi}" onclick="selectVessel(${a.mmsi})">
+      <div class="row"><span class="kind">${esc(a.kind.replace('_',' '))} · ${esc(vesselName(a.mmsi))}${reviewBadge(a)}</span><span class="meta">${esc(a.severity)} · ${(a.score*100).toFixed(0)}%</span></div>
+      <div class="meta">${hhmm(a.started_at)} to ${hhmm(a.ended_at)} · ${esc(a.status)} · raised by ${esc(a.created_by)}</div>
+      <p>${esc(a.details?.rationale||'')}</p>
+      ${(a.details?.evidence||[]).length?`<details><summary>evidence (${a.details.evidence.length})</summary><ul>${a.details.evidence.map(e=>`<li><b>${esc(e.source)}</b> ${esc(e.summary)}${e.reference?` <span class="mono">[${esc(e.reference)}]</span>`:''}</li>`).join('')}</ul></details>`:''}
+      <div class="actions" onclick="event.stopPropagation()">
+        <button onclick="investigate(${a.mmsi},'${a.id}','${esc(a.kind)}')">Investigate</button>
+        <button data-track="${a.mmsi}" class="${state.track?.mmsi===a.mmsi?'on':''}" onclick="toggleTrack(${a.mmsi})">Track</button>
+        ${a.review_state==='draft'?`<button onclick="reviewAlert('${a.id}','accepted')">Accept</button><button onclick="reviewAlert('${a.id}','rejected')">Reject</button>`:''}
+      </div>
+    </div>`).join('') : `<span class="empty">${state.alerts.length ? 'No alerts match the filters.' : 'No alerts yet. Run a watch sweep or wait for the replay.'}</span>`;
+}
+function quiet(msg){ console.warn(msg); }
+async function loadAlerts(){ try { state.alerts = await get('/alerts'); renderAlerts(); renderVessels(); } catch(e){ quiet('alerts unavailable: '+e.message); } }
+async function reviewAlert(id, decision){ if(!requireOfficer()) return; try { await post(`/alerts/${id}/review`, {decision}); toast(`Alert ${decision} by ${officer()}`); await loadAlerts(); } catch(e){ toast('Review failed: '+e.message, true); } }
+$('sweep').onclick = async () => { if(!requireOfficer()) return; try { await post('/sweep?hours=12'); toast('Sweep requested. Alerts appear as the Watch agent raises them.'); } catch(e){ toast('Sweep failed: '+e.message, true); } };
+
+// keyboard: j/k move, i investigate, t track, Shift+A / Shift+R review (a modifier so stray typing
+// can never accept or reject), Esc clear. Only on the Alerts tab.
+document.addEventListener('keydown', e => {
+  if(['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)) return;
+  if(e.metaKey || e.ctrlKey || e.altKey) return;
+  if(!document.getElementById('pane-alerts').classList.contains('active') && e.key!=='Escape') return;
+  const rows = visibleAlerts(); if(e.key==='Escape'){ clearTrack(); state.selected=null; renderVessels(); renderAlerts(); return; }
+  if(!rows.length) return;
+  let idx = rows.findIndex(a => a.mmsi===state.selected);
+  if(e.key==='j'){ selectVessel(rows[Math.min(idx+1, rows.length-1)].mmsi); }
+  else if(e.key==='k'){ selectVessel(rows[Math.max(idx-1, 0)].mmsi); }
+  else if(idx>=0){ const a=rows[idx]; if(e.key==='A'&&e.shiftKey&&a.review_state==='draft') reviewAlert(a.id,'accepted'); else if(e.key==='R'&&e.shiftKey&&a.review_state==='draft') reviewAlert(a.id,'rejected'); else if(e.key==='i') investigate(a.mmsi,a.id,a.kind); else if(e.key==='t') toggleTrack(a.mmsi); }
+});
+
+// ---------- investigations ----------
+async function loadInvestigations(){
+  try { state.investigations = await get('/investigations'); } catch(e){ quiet('investigations unavailable: '+e.message); return; }
+  $('nInv').textContent = state.investigations.filter(i=>i.status==='running' || (i.status==='complete' && i.review_state==='draft')).length;
+  $('invList').innerHTML = state.investigations.length ? state.investigations.map(i=>`
+    <div class="inv${state.openInv===i.id?' selected':''}" onclick="openInvestigation('${i.id}')">
+      <span class="h">${esc(vesselName(i.mmsi))} <span class="badge ${esc(i.status)}">${esc(i.status==='running' ? (i.job_status==='queued' ? 'queued' : (i.progress||[]).slice(-1)[0]?.step || 'running') : i.status)}</span>${i.status==='complete'?reviewBadge(i):''}${i.requested_by==='policy'?'<span class="badge">auto</span>':''}</span>
+      <span class="meta mono">${dmy(i.created_at)}</span>
+      <span class="meta">${esc(i.headline || (i.status==='running' ? 'orchestrator running' : i.trigger ? 'trigger: '+i.trigger : ''))}${i.priority?` · priority ${esc(i.priority)}`:''}</span>
+    </div>`).join('') : '<span class="empty">No investigations yet. Select an alert and click Investigate.</span>';
+  renderVessels();
+}
+function renderInvestigation(inv){
+  const el = $('investigation');
+  if(inv.status==='running'){
+    const mins = Math.max(0, Math.round((Date.now() - Date.parse(inv.created_at||Date.now()))/60000));
+    const prog = inv.progress || [];
+    const last = step => [...prog].reverse().find(p=>p.step===step);
+    const cls = step => { const p = last(step); return !p ? '' : p.status==='finished' ? 'done' : p.status==='failed' ? 'failed' : 'now'; };
+    const steps = [['job','Queued and claimed by a worker'],['orchestrator','Orchestrator invoked'],['investigator','Investigator: identity, ownership, sanctions, behaviour'],['tasking','Tasking: is imagery worth collecting'],['report','Report: Vessel of Interest draft']];
+    const queued = !prog.some(p=>p.step==='orchestrator');
+    el.innerHTML = `<div class="report"><div class="headline">Investigating ${esc(vesselName(inv.mmsi))}</div><div class="bar"><i></i></div>
+      <ul class="steps">${steps.map(([k,label])=>`<li class="${cls(k)}">${esc(label)}${last(k)?` <span class="mono">${hhmm(last(k).ts)}</span>`:''}${last(k)?.detail?` <span class="meta">${esc(last(k).detail)}</span>`:''}</li>`).join('')}</ul>
+      <p class="meta">${queued ? 'Queued' : 'Running'} for ${mins} min${inv.attempts>1?` · attempt ${inv.attempts}`:''}${inv.job_error?` · last error: ${esc(inv.job_error)}`:''}. Usually 2 to 4 minutes.</p></div>`; return; }
+  if(inv.status==='failed'){ el.innerHTML = `<div class="report"><div class="headline" style="color:var(--red)">Investigation failed</div><p class="mono">${esc(inv.report?.error||'')}</p><div class="actions"><button onclick="investigate(${inv.mmsi},null,'retry')">Retry</button></div></div>`; return; }
+  const rep = inv.report || {};
+  const list = xs => (xs||[]).map(t=>`<li>${esc(t)}</li>`).join('');
+  el.innerHTML = `<div class="report">
+    <div class="headline">${esc(rep.headline)}</div>
+    <span class="tag">priority ${esc(rep.priority)}</span><span class="tag">confidence ${esc(rep.confidence)}</span><span class="tag mono" title="${esc(inv.trace_id||'')}">trace ${esc((inv.trace_id||'').slice(0,12))}</span><span id="invReview">${reviewBadge(inv)}</span>
+    <p>${esc(rep.summary)}</p>
+    <details open><summary>Timeline</summary><ul>${list(rep.timeline)}</ul></details>
+    <details><summary>Indicators (${(rep.indicators||[]).length}) and counter-indicators (${(rep.counter_indicators||[]).length})</summary><ul>${list(rep.indicators)}</ul><ul style="color:var(--green)">${list(rep.counter_indicators)}</ul></details>
+    <details><summary>Identity, ownership, sanctions</summary><p>${esc(rep.identity_and_ownership)}</p><p>${esc(rep.sanctions_and_compliance)}</p></details>
+    <details open><summary>Recommended actions (for the watch officer)</summary><ul>${list(rep.recommended_actions)}</ul><p>${esc(rep.collection_plan)}</p></details>
+    <details><summary>Evidence (${(rep.evidence||[]).length}) and gaps</summary><ul>${(rep.evidence||[]).map(e=>`<li><b>${esc(e.source)}</b>: ${esc(e.summary)}${e.reference?` <span class="meta mono">[${esc(e.reference)}]</span>`:''}</li>`).join('')}</ul><ul>${list(rep.information_gaps)}</ul></details>
+    <p class="meta">${esc(rep.caveats)}</p>
+    <details id="snapshots"><summary>Evidence snapshots (captured at completion)</summary><div id="snapshotList" class="meta">loading...</div></details>
+    <details><summary>Ownership network</summary><div id="netSummary" class="meta">loading...</div></details>
+    ${inv.manifest && inv.manifest.nodes ? `<details><summary>Provenance</summary><div class="meta">code ${esc(inv.manifest.code_revision||'?')} · schema ${esc(inv.manifest.schema_version||'?')} · MCP ${esc(Object.entries(inv.manifest.mcp_servers||{}).map(([k,v])=>k+' '+v).join(', '))}<ul>${(inv.manifest.nodes||[]).map(n=>`<li><b>${esc(n.node)}</b> ${esc(n.model_id||'')} <span class="mono">${esc(n.tier||'')}</span>${n.attempts>1?` · ${n.attempts} attempts`:''}${(n.policy_problems||[]).length?` · <span style="color:var(--red)">policy: ${esc(n.policy_problems.join('; '))}</span>`:''}</li>`).join('')}</ul></div></details>` : ''}
+    <div class="actions">
+      ${inv.review_state==='draft'?`<span id="invActions"><button onclick="reviewInvestigation('${inv.id}','accepted')">Accept report</button> <button onclick="reviewInvestigation('${inv.id}','rejected')">Reject report</button></span>`:''}
+      <button class="small" onclick="toggleTrack(${inv.mmsi})">Track vessel</button>
+      <button class="small" onclick="copyLink('${inv.id}')">Copy link</button>
+      <button class="small" onclick="exportReport('${inv.id}')">Export JSON</button>
+      <button class="small" onclick="window.print()">Print / PDF</button>
+      <button class="small" onclick="closeInvestigation()">Close</button>
+    </div></div>`;
+  el.scrollIntoView({block:'start'});
+  loadSnapshots(inv); loadNetwork(inv.mmsi);
+}
+async function loadSnapshots(inv){
+  const box = $('snapshotList'); if(!box) return;
+  try { const rows = await get(`/evidence?entity_kind=investigation&entity_id=${inv.id}`);
+    box.innerHTML = rows.length ? `<ul>${rows.map(r=>`<li><b>${esc(r.kind)}</b> ${esc(r.summary||'')}${r.reference?` <span class="mono">[${esc(r.reference)}]</span>`:''} <span class="mono">${dmy(r.captured_at)}</span></li>`).join('')}</ul>` : 'No snapshots for this investigation.';
+  } catch(e){ box.textContent = 'snapshots unavailable'; }
+}
+async function loadNetwork(mmsi){
+  const box = $('netSummary'); if(!box || !mmsi) return;
+  try { const n = await get(`/network/${mmsi}?depth=2`);
+    if(!n.found){ box.textContent = 'Vessel is not in the ownership network.'; return; }
+    const byId = Object.fromEntries(n.nodes.map(x=>[x.id,x]));
+    const rels = n.edges.map(e=>`<li>${esc(byId[e.src].name)} <span class="mono">${esc(e.rel)}</span> ${esc(byId[e.dst].name)}${e.source!=='registry'?` <span class="mono">[${esc(e.source)}]</span>`:''}</li>`).join('');
+    const listed = n.listed.map(l=>`<li style="color:var(--red)">listed: ${esc(l.name)} via ${l.path.map(esc).join(' → ')}</li>`).join('');
+    box.innerHTML = `<p>${n.nodes.length} entities, ${n.edges.length} relationships within 2 hops. People appear as pseudonyms here.</p><ul>${listed}${rels}</ul>`;
+  } catch(e){ box.textContent = 'network unavailable'; }
+}
+function closeInvestigation(){ state.openInv=null; if(state.poll){ clearInterval(state.poll); state.poll=null; } $('investigation').innerHTML=''; history.replaceState(null,'',location.pathname); loadInvestigations(); }
+async function openInvestigation(id, {silent=false}={}){
+  let inv; try { inv = await get(`/investigations/${id}`); } catch(e){ if(!silent) toast('investigation not found', true); return; }
+  state.openInv = id; showTab('investigations'); renderInvestigation(inv);
+  history.replaceState(null, '', `?investigation=${id}`);
+  document.querySelectorAll('.inv').forEach(el => el.classList.remove('selected'));
+  if(inv.mmsi) selectVessel(inv.mmsi);
+  if(state.poll) clearInterval(state.poll);
+  if(inv.status==='running') state.poll = setInterval(async () => { const cur = await get(`/investigations/${id}`); renderInvestigation(cur); if(cur.status!=='running'){ clearInterval(state.poll); state.poll=null; toast(cur.status==='complete' ? 'Report ready for review' : 'Investigation failed', cur.status!=='complete'); loadAlerts(); loadTasking(); loadInvestigations(); } }, 4000);
+  loadInvestigations();
+  return inv;
+}
+async function investigate(mmsi, alertId, trigger){
+  if(!requireOfficer()) return;
+  try { const r = await post(`/investigations/${mmsi}`, {trigger, alert_id: alertId}); toast(`Investigation started for ${vesselName(mmsi)}`); await openInvestigation(r.investigation_id); }
+  catch(e){ toast('Could not start investigation: '+e.message, true); }
+}
+async function reviewInvestigation(id, decision){ if(!requireOfficer()) return; try { const r = await post(`/investigations/${id}/review`, {decision}); $('invReview').innerHTML = reviewBadge(r); const a=$('invActions'); if(a) a.remove(); toast(`Report ${decision} by ${officer()}`); loadInvestigations(); } catch(e){ toast('Review failed: '+e.message, true); } }
+function copyLink(id){ const url = `${location.origin}${location.pathname}?investigation=${id}`; navigator.clipboard?.writeText(url).then(()=>toast('Link copied'), ()=>toast(url)); }
+async function exportReport(id){ const inv = await get(`/investigations/${id}`); const blob = new Blob([JSON.stringify(inv, null, 2)], {type:'application/json'}); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `argus-voi-${inv.mmsi}-${id.slice(0,8)}.json`; a.click(); }
+
+// ---------- tasking ----------
+async function loadTasking(){
+  try { state.tasking = await get('/tasking'); } catch(e){ quiet('tasking unavailable: '+e.message); return; }
+  const rows = state.tasking; $('nTask').textContent = rows.filter(t=>t.status==='proposed').length;
+  $('tasking').innerHTML = rows.length ? rows.map(t=>`<div class="task"><b>${esc(t.sensor)}</b> · ${esc(vesselName(t.mmsi))} · <span class="badge ${t.status==='approved'?'accepted':t.status==='rejected'?'rejected':'draft'}">${esc(t.status)}</span> <span class="meta">${esc(t.priority)} · ${hhmm(t.window_start)} to ${hhmm(t.window_end)}</span><p class="meta">${esc(t.rationale)}</p>${t.status==='proposed'?`<div class="actions"><button onclick="decide('${t.id}','approve')">Approve</button><button onclick="decide('${t.id}','reject')">Reject</button></div>`:`<span class="meta">${esc(t.status)} by ${esc(t.decided_by||'?')} at ${dmy(t.decided_at)}</span>`}</div>`).join('') : '<span class="empty">None.</span>';
+}
+async function decide(id, d){ if(!requireOfficer()) return; try { await post(`/tasking/${id}/${d}`); toast(`Tasking ${d==='approve'?'approved':'rejected'} by ${officer()}`); loadTasking(); } catch(e){ toast('Decision failed: '+e.message, true); } }
+
+// ---------- audit ----------
+async function loadAudit(){
+  let rows; try { rows = await get('/audit?limit=200'); } catch(e){ quiet('audit unavailable: '+e.message); return; }
+  const q = $('auditSearch').value.trim().toLowerCase();
+  if(q) rows = rows.filter(r => (r.actor+' '+r.action+' '+r.entity_kind+' '+(r.entity_id||'')+' '+JSON.stringify(r.details||{})+' '+vesselName(r.details?.mmsi||'')).toLowerCase().includes(q));
+  $('audit').innerHTML = rows.length ? `<table><thead><tr><th>time</th><th>actor</th><th>action</th><th>entity</th></tr></thead><tbody>${rows.map(r=>`<tr><td class="mono">${dmy(r.ts)}</td><td>${esc(r.actor)}<br><span class="meta">${esc(r.actor_kind)}</span></td><td>${esc(r.action)}${r.details?.mmsi?`<br><span class="meta">${esc(vesselName(r.details.mmsi))}</span>`:''}${r.details?.decision?`<br><span class="meta">${esc(r.details.decision)}</span>`:''}</td><td>${r.entity_kind==='investigation'&&r.entity_id?`<a href="?investigation=${r.entity_id}" onclick="event.preventDefault();openInvestigation('${r.entity_id}')" style="color:var(--cyan)">${esc(r.entity_kind)}</a>`:esc(r.entity_kind)}<br><span class="meta mono">${esc((r.entity_id||'').slice(0,8))}</span></td></tr>`).join('')}</tbody></table>` : '<span class="empty">No events match.</span>';
+}
+$('auditSearch').oninput = loadAudit;
+
+// ---------- boot: data first, map layers when the basemap is ready ----------
+loadArea(); loadVessels(); loadAlerts(); loadInvestigations(); loadTasking(); loadAudit(); startStream();
+const deep = new URLSearchParams(location.search).get('investigation'); if(deep) openInvestigation(deep, {silent:true});
+setInterval(loadAlerts, 8000); setInterval(loadTasking, 8000); setInterval(loadInvestigations, 8000); setInterval(loadAudit, 20000);
+</script>
+</body>
+</html>

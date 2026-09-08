@@ -1,0 +1,157 @@
+# Synthetic maritime scenario: Eastern Mediterranean, south of Cyprus.
+# Every vessel, owner, sanction and zone in this file is fictional.
+name: east_med_baseline
+seed: 42
+start_time: "2026-09-01T00:00:00Z"
+duration_minutes: 480
+interval_seconds: 60
+bbox: {min_lon: 31.5, min_lat: 33.2, max_lon: 35.2, max_lat: 35.0}
+
+zones:
+  - name: "Subsea Cable Corridor Kappa"
+    kind: protected_cable
+    polygon: [[32.6, 33.9], [33.9, 34.25], [33.95, 34.05], [32.65, 33.7]]
+    properties: {owner: "Fictional Telecom Consortium", buffer_nm: 3}
+  - name: "Naval Exercise Area Delta (NOTMAR 217/26)"
+    kind: exclusion
+    polygon: [[33.2, 33.35], [34.1, 33.35], [34.1, 33.8], [33.2, 33.8]]
+    properties: {active_until: "2026-09-03T00:00:00Z"}
+  - name: "Limassol Port Approach"
+    kind: port_approach
+    polygon: [[32.9, 34.55], [33.15, 34.55], [33.15, 34.7], [32.9, 34.7]]
+  - name: "Offshore Anchorage Echo"
+    kind: anchorage
+    polygon: [[33.3, 34.45], [33.5, 34.45], [33.5, 34.58], [33.3, 34.58]]
+
+vessels:
+  - mmsi: 210111001
+    imo: 9410001
+    name: "MSC AURELIA"
+    flag: CY
+    ship_type: container
+    length_m: 299
+    behaviours:
+      - {type: transit, waypoints: [[31.6, 33.9], [33.0, 34.3], [34.2, 34.75], [35.1, 34.9]], speed_kn: 17}
+  - mmsi: 636222002
+    imo: 9410002
+    name: "LIBERTY GRACE"
+    flag: LR
+    ship_type: bulk_carrier
+    length_m: 229
+    behaviours:
+      - {type: transit, waypoints: [[35.1, 33.5], [33.6, 34.0], [32.0, 34.4], [31.6, 34.6]], speed_kn: 12.5}
+  - mmsi: 247333003
+    imo: 9410003
+    name: "GIULIA ROSSI"
+    flag: IT
+    ship_type: ro_ro
+    length_m: 186
+    behaviours:
+      - {type: transit, waypoints: [[31.6, 34.7], [33.0, 34.62], [33.4, 34.5]], speed_kn: 15}
+      - {type: anchor, at: [33.4, 34.5], duration_min: 180}
+  - mmsi: 271444004
+    imo: 9410004
+    name: "KARADENIZ 7"
+    flag: TR
+    ship_type: fishing
+    length_m: 28
+    behaviours:
+      - {type: fishing_pattern, center: [34.6, 34.2], radius_nm: 6, speed_kn: 4}
+  - mmsi: 210555005
+    imo: 9410005
+    name: "APHRODITE SUPPLY"
+    flag: CY
+    ship_type: offshore_supply
+    length_m: 78
+    behaviours:
+      - {type: transit, waypoints: [[33.05, 34.6], [33.7, 34.1], [34.35, 33.95]], speed_kn: 11}
+      - {type: anchor, at: [34.35, 33.95], duration_min: 120}
+      - {type: transit, waypoints: [[34.35, 33.95], [33.7, 34.1], [33.05, 34.6]], speed_kn: 11}
+
+  # Anomalous traffic. Ground truth for evaluation is derived from these blocks.
+  - mmsi: 511666006
+    imo: 9410006
+    name: "MERIDIAN STAR"
+    flag: PW
+    ship_type: tanker
+    length_m: 244
+    behaviours:
+      - {type: transit, waypoints: [[34.9, 34.45], [34.35, 34.35]], speed_kn: 14}
+      - {type: rendezvous, with_mmsi: 422888009, at: [34.35, 34.35], duration_min: 90}
+      - {type: transit, waypoints: [[34.35, 34.35], [33.6, 34.05]], speed_kn: 14}
+      - {type: dark_gap, duration_min: 60, drift_waypoints: [[33.6, 34.05], [33.3, 33.95]], speed_kn: 4}
+      - {type: transit, waypoints: [[33.3, 33.95], [32.9, 34.0], [32.4, 34.3]], speed_kn: 14}
+  - mmsi: 613777007
+    imo: 9410007
+    name: "OCEAN PILGRIM"
+    flag: CM
+    ship_type: general_cargo
+    length_m: 118
+    behaviours:
+      - {type: loiter, center: [33.65, 33.55], radius_nm: 1.2, duration_min: 300, speed_kn: 1.5}
+      - {type: transit, waypoints: [[33.65, 33.55], [34.6, 33.4]], speed_kn: 9}
+  - mmsi: 636222002
+    imo: 9410008
+    name: "LIBERTY GRACE"
+    flag: LR
+    ship_type: bulk_carrier
+    length_m: 190
+    spoof_of: 636222002
+    behaviours:
+      - {type: transit, waypoints: [[32.0, 33.4], [33.0, 33.3], [34.5, 33.25]], speed_kn: 9}
+  - mmsi: 422888009
+    imo: 9410009
+    name: "NAVAND 3"
+    flag: IR
+    ship_type: tanker
+    length_m: 183
+    behaviours:
+      - {type: transit, waypoints: [[34.8, 34.15], [34.35, 34.35]], speed_kn: 9}
+      - {type: rendezvous, with_mmsi: 511666006, at: [34.35, 34.35], duration_min: 90}
+      - {type: transit, waypoints: [[34.35, 34.35], [35.1, 34.1]], speed_kn: 9}
+
+registry:
+  - mmsi: 511666006
+    imo: 9410006
+    name: "MERIDIAN STAR"
+    flag: PW
+    flag_history: [{flag: PA, until: "2024-03"}, {flag: GA, until: "2025-08"}, {flag: PW, until: null}]
+    registered_owner: "Meridian Star Shipping Ltd (Marshall Islands)"
+    operator: "Halcyon Marine Management FZE"
+    beneficial_owner: "Unknown (nominee directors)"
+    sanctions: [{list: "FICTIONAL-OFAC-SDN", entry: "Halcyon Marine Management FZE", since: "2025-11"}]
+    fleet: [{name: "MERIDIAN DAWN", imo: 9410016}, {name: "MERIDIAN MOON", imo: 9410017}]
+    notes: "Three flag changes in 30 months. Operator appears on a fictional sanctions list."
+  - mmsi: 613777007
+    imo: 9410007
+    name: "OCEAN PILGRIM"
+    flag: CM
+    flag_history: [{flag: TG, until: "2025-02"}, {flag: CM, until: null}]
+    registered_owner: "Pilgrim Cargo SA"
+    operator: "Pilgrim Cargo SA"
+    beneficial_owner: "Pilgrim Holdings (Cyprus)"
+    sanctions: []
+    fleet: []
+    notes: "P&I cover lapsed 2026-06 according to fictional insurer feed."
+  - mmsi: 636222002
+    imo: 9410002
+    name: "LIBERTY GRACE"
+    flag: LR
+    flag_history: [{flag: LR, until: null}]
+    registered_owner: "Grace Bulk Carriers Inc"
+    operator: "Atlantic Dry Bulk Management"
+    beneficial_owner: "Atlantic Dry Bulk Management"
+    sanctions: []
+    fleet: [{name: "LIBERTY HOPE", imo: 9410012}]
+    notes: "Legitimate operator. A second track broadcasting this MMSI is an identity spoof."
+  - mmsi: 422888009
+    imo: 9410009
+    name: "NAVAND 3"
+    flag: IR
+    flag_history: [{flag: IR, until: null}]
+    registered_owner: "Navand Tankers Co"
+    operator: "Navand Tankers Co"
+    beneficial_owner: "Navand Tankers Co"
+    sanctions: [{list: "FICTIONAL-EU-RESTRICTIVE", entry: "Navand Tankers Co", since: "2024-05"}]
+    fleet: [{name: "NAVAND 1", imo: 9410010}, {name: "NAVAND 2", imo: 9410011}]
+    notes: "Listed operator. Known for ship-to-ship transfers at sea."

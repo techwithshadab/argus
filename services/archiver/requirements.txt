@@ -1,0 +1,3 @@
+psycopg[binary]==3.3.5
+pyarrow==21.0.0
+boto3==1.43.86

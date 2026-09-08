@@ -1,0 +1,108 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="_design.css">
+<style>
+  /* High-level view. Dark variant of the shared palette so the official AWS
+     icons and product marks read as in AWS reference architectures. One icon and one name per
+     node; boxes sized to their content; rows aligned across boxes (icon centres at y 322, 442, 586, 706; top row 142); connectors solid and orthogonal, icon edge to icon edge, with junction dots where a
+     line branches, and no connector crossing another, an icon or a label.
+     Icons: docs/diagrams/src/icons (see README). */
+  body{width:1640px;height:510px;background:radial-gradient(1400px 800px at 30% 20%,#12304A,#0B1F33 60%,#081726);color:#F1F4F5}
+  .ttl{position:absolute;left:0;right:0;top:14px;text-align:center;font-family:var(--mono);font-size:18px;font-weight:600;letter-spacing:3.6px;text-transform:uppercase;color:#F1F4F5}
+  .legend{position:absolute;right:28px;top:20px;display:flex;gap:14px;align-items:center;font-size:10.5px;color:rgba(241,244,245,.75)}
+  .legend span{display:flex;align-items:center;gap:5px}
+  .grp{position:absolute;border:1.5px dashed rgba(143,201,214,.38);border-radius:12px}
+  .grp.solid{border-style:solid;border-color:rgba(143,201,214,.4)}
+  .glab{position:absolute;display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:1.4px;text-transform:uppercase;color:#CFE3EA;background:#0E2740;padding:2px 8px 2px 4px;border-radius:6px;white-space:nowrap;z-index:1}
+  .glab img{width:18px;height:18px;display:block}
+  .glab .sub{font-family:var(--font);font-size:9.5px;font-weight:500;letter-spacing:0;text-transform:none;color:rgba(241,244,245,.6)}
+  .glab.c{background:transparent;padding:0;justify-content:center}
+  .glab.c .gi{display:flex;align-items:center;gap:7px;background:#0E2740;padding:2px 8px 2px 4px;border-radius:6px}
+  .node{position:absolute;width:100px;margin-left:-50px;text-align:center;z-index:1}
+  .node.w84{width:84px;margin-left:-42px}
+  .node.w70{width:70px;margin-left:-35px}
+  .node .ico{width:44px;height:44px;margin:0 auto;display:flex;align-items:center;justify-content:center}
+  .node .ico img{width:44px;height:44px;display:block;border-radius:6px}
+  .node .ico img.mark{width:40px;height:40px;border-radius:0}
+  .node .lb{font-size:10.5px;font-weight:600;line-height:1.2;margin-top:10px;color:#F1F4F5;display:inline-block;padding:1px 0}
+  .feed{position:absolute;display:flex;align-items:center;gap:8px;font-size:10.5px;font-weight:600;color:#F1F4F5;z-index:1}
+  .feed img{width:26px;height:26px;display:block}
+  .feed span{font-weight:500;color:rgba(241,244,245,.62);font-size:9.5px}
+  .note{position:absolute;font-size:9.5px;color:rgba(241,244,245,.62);line-height:1.4;z-index:1}
+  .vpill2{position:absolute;background:#0B1F33;border:1.5px dashed #E25B50;border-radius:20px;padding:10px 6px;font-family:var(--mono);font-size:9px;font-weight:600;letter-spacing:1.5px;color:#F2A59D;writing-mode:vertical-rl;transform:rotate(180deg);text-transform:uppercase;z-index:1}
+  svg.wires{position:absolute;left:0;top:0;width:1640px;height:510px;pointer-events:none;z-index:0}
+  svg.wires > path{fill:none;stroke:#8FC9D6;stroke-width:2}
+  svg.wires circle{fill:#8FC9D6}
+  svg.wires text{font-family:"Geist Mono",Menlo,monospace;font-size:9px;font-weight:600;fill:#CFE3EA;letter-spacing:.4px}
+  svg.wires rect.lbg{fill:#0E2740;rx:4}
+  .blk{position:absolute;background:#0E2740;border:1.5px solid rgba(143,201,214,.45);border-radius:12px;padding:16px 18px;z-index:1}
+  .blk .k{font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:2px;text-transform:uppercase;color:#8FC9D6}
+  .blk .t{font-size:19px;font-weight:700;color:#F1F4F5;margin-top:6px;line-height:1.15}
+  .blk .d{font-size:11.5px;line-height:1.45;color:rgba(241,244,245,.8);margin-top:8px}
+  .blk .d b{color:#F1F4F5;font-weight:600}
+  .blk.big{background:rgba(14,39,64,.55);border-style:dashed;padding:0}
+  .strip{position:absolute;background:#0E2740;border:1.5px solid rgba(143,201,214,.45);border-radius:10px;padding:10px 16px;font-size:11.5px;color:rgba(241,244,245,.8);z-index:1;display:flex;gap:28px;align-items:center}
+  .strip b{color:#F1F4F5;font-weight:600}
+  .strip .k{font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:2px;text-transform:uppercase;color:#8FC9D6;white-space:nowrap}
+</style></head>
+<body>
+
+<div class="ttl">How Argus works</div>
+<div class="legend">
+  <span><svg width="26" height="10"><line x1="0" y1="5" x2="18" y2="5" stroke="#8FC9D6" stroke-width="2"/><polygon points="18,1.5 25,5 18,8.5" fill="#8FC9D6"/></svg> flow</span>
+  <span><svg width="24" height="10"><line x1="0" y1="5" x2="24" y2="5" stroke="#E25B50" stroke-width="2" stroke-dasharray="5 4"/></svg> where people decide</span>
+</div>
+
+<!-- PLAN: five blocks left to right on one row (block tops 120, height 236); Argus as a dashed container around the
+     middle three; a strip under it for what every step carries; the people boundary between Argus and the watch floor.
+     Arrows leave and enter block edges at y 238, labels above them. -->
+<svg class="wires" viewBox="0 0 1640 510">
+  <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8FC9D6"/></marker></defs>
+  <path d="M332,238 H388" marker-end="url(#ah)"/>
+  <rect class="lbg" x="342" y="218" width="36" height="13"/><text x="347" y="227.5">data</text>
+  <path d="M672,238 H698" marker-end="url(#ah)"/>
+  <path d="M982,238 H1008" marker-end="url(#ah)"/>
+  <path d="M1292,238 H1368" marker-end="url(#ah)"/>
+  <rect class="lbg" x="1316" y="244" width="48" height="13"/><text x="1321" y="253.5">drafts</text>
+  <path d="M1485,358 V430 H1292" marker-end="url(#ah)"/>
+  <rect class="lbg" x="1400" y="412" width="76" height="13"/><text x="1405" y="421.5">decisions</text>
+</svg>
+
+<div class="blk" style="left:40px;top:120px;width:290px;height:236px">
+  <div class="k">Sources</div><div class="t">What the world reports</div>
+  <div class="d"><b>Ship positions</b> from AIS, every few seconds.<br><b>Vessel registries</b> and who owns what.<br><b>Sanction lists</b> of people, companies and ships.<br><b>Maps</b> of ports, corridors and closed areas.<br><b>Satellite imagery</b> catalogues.<br><br>All of it is treated as data, never as instructions.</div>
+</div>
+
+<div class="blk big" style="left:370px;top:82px;width:940px;height:400px"></div>
+<div class="glab" style="left:382px;top:74px"><img src="icons/aws/agentcore.svg" alt="">Argus <span class="sub">· runs inside your own AWS account; models never see the internet</span></div>
+
+<div class="blk" style="left:390px;top:120px;width:280px;height:236px">
+  <div class="k">Watch</div><div class="t">Notice what matters</div>
+  <div class="d">Five detectors run continuously over every track: <b>silences</b>, <b>shared identities</b>, <b>loitering</b>, <b>meetings at sea</b>, <b>closed-area entries</b>. They are arithmetic, not opinion.<br><br>An agent reads each candidate and raises an <b>alert</b> with its evidence and time window, or dismisses it and says why.</div>
+</div>
+<div class="blk" style="left:700px;top:120px;width:280px;height:236px">
+  <div class="k">Investigate</div><div class="t">Build the case</div>
+  <div class="d">Two lines of enquiry run at once: <b>who is this vessel and who controls it</b>, and <b>what did it do</b>. Each can only use approved tools over the record.<br><br>Code, not a model, merges the two, keeps every claim tied to its evidence, and names what is still unknown.</div>
+</div>
+<div class="blk" style="left:1010px;top:120px;width:280px;height:236px">
+  <div class="k">Propose</div><div class="t">Write it up, suggest a next step</div>
+  <div class="d">A <b>Vessel of Interest report</b>: timeline, indicators, counter-indicators, confidence, gaps. Every indicator cites its evidence or the report is rejected.<br><br>If imagery would settle the question, a <b>collection request</b> is proposed. Nothing is ordered.</div>
+</div>
+<div class="strip" style="left:390px;top:382px;width:900px;height:78px">
+  <span class="k">Every step carries</span>
+  <span><b>Evidence frozen</b> as it was seen</span>
+  <span><b>A record</b> of the prompts, models and tools that produced it</span>
+  <span><b>Model calls behind a guardrail</b>, on Amazon Nova, in the account</span>
+  <span><b>Cost in cents</b>, minutes per case</span>
+</div>
+
+<div class="vpill2" style="left:1328px;top:270px">people decide</div>
+
+<div class="blk" style="left:1370px;top:120px;width:230px;height:236px">
+  <div class="k">Watch floor</div><div class="t">Decide</div>
+  <div class="d"><b>Review</b> alerts and reports; accept or reject.<br><br><b>Approve</b> or decline a collection request.<br><br>Every decision is written down with who and when, and can never be edited.</div>
+</div>
+
+</body></html>

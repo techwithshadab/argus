@@ -1,0 +1,24 @@
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    url: http://prometheus:9090
+    isDefault: true
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    url: http://tempo:3200
+    jsonData:
+      tracesToLogsV2: {datasourceUid: loki, filterByTraceID: true, spanStartTimeShift: "-5m", spanEndTimeShift: "5m"}
+      tracesToMetrics: {datasourceUid: prometheus}
+      serviceMap: {datasourceUid: prometheus}
+      nodeGraph: {enabled: true}
+      search: {hide: false}
+  - name: Loki
+    uid: loki
+    type: loki
+    url: http://loki:3100
+    jsonData:
+      derivedFields:
+        - {name: TraceID, matcherRegex: "trace_id=(\\w+)", datasourceUid: tempo, url: "$${__value.raw}"}

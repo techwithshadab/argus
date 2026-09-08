@@ -1,0 +1,31 @@
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    url: http://localhost:9090
+    isDefault: true
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    url: http://localhost:3200
+    jsonData:
+      tracesToLogsV2: {datasourceUid: loki, filterByTraceID: true, spanStartTimeShift: "-5m", spanEndTimeShift: "5m"}
+      tracesToMetrics: {datasourceUid: prometheus}
+      serviceMap: {datasourceUid: prometheus}
+      nodeGraph: {enabled: true}
+      search: {hide: false}
+  - name: Loki
+    uid: loki
+    type: loki
+    url: http://localhost:3100
+    jsonData:
+      derivedFields:
+        - {name: TraceID, matcherRegex: "trace_id=(\\w+)", datasourceUid: tempo, url: "$${__value.raw}"}
+  # AWS resource metrics (SQS queue depth, ECS, Bedrock, Aurora) with the task role's credentials.
+  - name: CloudWatch
+    uid: cloudwatch
+    type: cloudwatch
+    jsonData:
+      authType: default
+      defaultRegion: ${AWS_REGION}

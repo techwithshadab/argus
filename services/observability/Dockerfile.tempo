@@ -1,0 +1,4 @@
+# Tempo with the AWS config baked in (the image is otherwise upstream). Build context: repo root.
+FROM grafana/tempo:2.8.1
+COPY observability/aws/tempo.yaml /etc/tempo.yaml
+CMD ["-config.file=/etc/tempo.yaml"]

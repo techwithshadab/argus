@@ -1,0 +1,50 @@
+# Fixed inputs per node for the evals (phase 5). Scenario: east_med_baseline unless noted.
+# A2A URLs are the compose services; on AWS point them at the runtimes' invocation URLs.
+watch:
+  hours: 12
+  timeout_s: 900
+
+investigator:
+  a2a_url: http://localhost:9002/
+  timeout_s: 600
+  cases:
+    - name: meridian-identity
+      mmsi: 511666006
+      scope: identity
+      trigger: ais_gap
+      expect: ["Halcyon", ["FICTIONAL-OFAC-SDN", "OFAC", "SDN"], ["PW", "Palau"]]      # listed operator, current flag
+    - name: meridian-behaviour
+      mmsi: 511666006
+      scope: behaviour
+      trigger: ais_gap
+      alert: {kind: ais_gap, started_at: "2026-09-01T06:26:00Z", ended_at: "2026-09-01T07:27:00Z"}
+      expect: ["gap", "corridor", ["rendezvous", "NAVAND"]]
+    - name: liberty-identity
+      mmsi: 636222002
+      scope: identity
+      trigger: mmsi_spoof
+      expect: ["Grace Bulk", ["spoof", "conflict", "two positions", "two locations", "implausible"]]
+      expect_absent: ["sanction"]                            # legitimate operator: no listing claimed
+
+tasking:
+  a2a_url: http://localhost:9003/
+  timeout_s: 600
+  cases:
+    - name: dark-gap-in-corridor
+      mmsi: 511666006
+      behaviour: "61-minute AIS gap ending inside the Subsea Cable Corridor Kappa, then transit west at 14 kn."
+      gap: "ais_gap from 2026-09-01T06:26:00Z to 2026-09-01T07:27:00Z near 33.45E 34.0N; vessel reappeared 12 nm west."
+      expect_recommended: true
+    - name: short-explained-gap
+      mmsi: 210111001
+      behaviour: "Container ship on a steady transit; 12-minute AIS gap in open water, reappeared on track."
+      gap: "12-minute gap at 2026-09-01T03:00:00Z near 33.5E 34.5N, on the expected track."
+      expect_recommended: false
+
+report:
+  timeout_s: 1200
+  cases:
+    - name: meridian-star
+      mmsi: 511666006
+      trigger: ais_gap
+      expect: ["MERIDIAN STAR", "corridor", "Halcyon"]

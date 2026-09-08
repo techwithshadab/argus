@@ -1,0 +1,4 @@
+FROM prom/prometheus:v3.4.0
+COPY observability/aws/prometheus.yml /etc/prometheus/prometheus.yml
+COPY observability/alerts.yml /etc/prometheus/alerts.yml
+CMD ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus", "--web.enable-remote-write-receiver", "--enable-feature=exemplar-storage"]

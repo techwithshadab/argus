@@ -1,0 +1,256 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="_design.css">
+<style>
+  /* Technical architecture. Dark variant of the shared palette so the official AWS
+     icons and product marks read as in AWS reference architectures. One icon and one name per
+     node; boxes sized to their content; rows aligned across boxes (icon centres at y 322, 442, 586, 706; top row 142); connectors solid and orthogonal, icon edge to icon edge, with junction dots where a
+     line branches, and no connector crossing another, an icon or a label.
+     Icons: docs/diagrams/src/icons (see README). */
+  body{width:1900px;height:840px;background:radial-gradient(1400px 800px at 30% 20%,#12304A,#0B1F33 60%,#081726);color:#F1F4F5}
+  .ttl{position:absolute;left:0;right:0;top:8px;text-align:center;font-family:var(--mono);font-size:32px;font-weight:700;letter-spacing:6px;text-transform:uppercase;color:#F1F4F5}
+  .legend{position:absolute;right:28px;top:20px;display:flex;gap:14px;align-items:center;font-size:10.5px;color:rgba(241,244,245,.75)}
+  .legend span{display:flex;align-items:center;gap:5px}
+  .grp{position:absolute;border:1.5px dashed rgba(143,201,214,.38);border-radius:12px}
+  .grp.solid{border-style:solid;border-color:rgba(143,201,214,.4)}
+  .glab{position:absolute;display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:1.4px;text-transform:uppercase;color:#CFE3EA;background:#0E2740;padding:2px 8px 2px 4px;border-radius:6px;white-space:nowrap;z-index:1}
+  .glab img{width:18px;height:18px;display:block}
+  .glab .sub{font-family:var(--font);font-size:9.5px;font-weight:500;letter-spacing:0;text-transform:none;color:rgba(241,244,245,.6)}
+  .glab.c{background:transparent;padding:0;justify-content:center}
+  .glab.c .gi{display:flex;align-items:center;gap:7px;background:#0E2740;padding:2px 8px 2px 4px;border-radius:6px}
+  .node{position:absolute;width:100px;margin-left:-50px;text-align:center;z-index:1}
+  .node.w84{width:84px;margin-left:-42px}
+  .node.w70{width:70px;margin-left:-35px}
+  .node .ico{width:44px;height:44px;margin:0 auto;display:flex;align-items:center;justify-content:center}
+  .node .ico img{width:44px;height:44px;display:block;border-radius:6px}
+  .node .ico img.mark{width:40px;height:40px;border-radius:0}
+  .node .lb{font-size:10.5px;font-weight:600;line-height:1.2;margin-top:10px;color:#F1F4F5;display:inline-block;padding:1px 0}
+  .feed{position:absolute;display:flex;align-items:center;gap:8px;font-size:10.5px;font-weight:600;color:#F1F4F5;z-index:1}
+  .feed img{width:26px;height:26px;display:block}
+  .feed span{font-weight:500;color:rgba(241,244,245,.62);font-size:9.5px}
+  .note{position:absolute;font-size:9.5px;color:rgba(241,244,245,.62);line-height:1.4;z-index:1}
+  .vpill2{position:absolute;background:#0B1F33;border:1.5px dashed #E25B50;border-radius:20px;padding:10px 6px;font-family:var(--mono);font-size:9px;font-weight:600;letter-spacing:1.5px;color:#F2A59D;writing-mode:vertical-rl;transform:rotate(180deg);text-transform:uppercase;z-index:1}
+  svg.wires{position:absolute;left:0;top:0;width:1900px;height:840px;pointer-events:none;z-index:0}
+  svg.wires > path{fill:none;stroke:#8FC9D6;stroke-width:2}
+  svg.wires circle{fill:#8FC9D6}
+  svg.wires text{font-family:"Geist Mono",Menlo,monospace;font-size:9px;font-weight:600;fill:#CFE3EA;letter-spacing:.4px}
+  svg.wires rect.lbg{fill:#0E2740;rx:4}
+</style></head>
+<body>
+
+<div class="ttl">Argus</div>
+<div class="legend">
+  <span><svg width="26" height="10"><line x1="0" y1="5" x2="18" y2="5" stroke="#8FC9D6" stroke-width="2"/><polygon points="18,1.5 25,5 18,8.5" fill="#8FC9D6"/></svg> call · data flow</span>
+  <span><svg width="24" height="10"><line x1="0" y1="5" x2="24" y2="5" stroke="#E25B50" stroke-width="2" stroke-dasharray="5 4"/></svg> trust boundary</span>
+  <span><span style="width:11px;height:11px;border:1.5px dashed rgba(143,201,214,.55);border-radius:3px;display:inline-block"></span> group</span>
+</div>
+
+<!-- ===== wires (icon edge to icon edge; icons are 44 px; row centres 142 · 322 · 442 · 586 · 706;
+     columns 440 · 552 · 640 · 704 in the application, 925 · 1077 agents, 1250 · 1373 · 1496 AgentCore,
+     1656 · 1800 monitoring; labels sit beside a wire, never on a box border) ===== -->
+<svg class="wires" viewBox="0 0 1900 840">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8FC9D6"/></marker>
+  </defs>
+  <!-- officers (browser, https) and operators (caller token, iam) -> public ALB -> web ui -> api -->
+  <path d="M111,130 H150 V304 H274" marker-end="url(#ah)"/>
+  <rect class="lbg" x="178" y="286" width="42" height="13"/><text x="183" y="295.5">https</text>
+  <path d="M111,322 H274" marker-end="url(#ah)"/>
+  <rect class="lbg" x="178" y="326" width="34" height="13"/><text x="183" y="335.5">iam</text>
+  <path d="M318,322 H418" marker-end="url(#ah)"/>
+  <path d="M462,322 H530" marker-end="url(#ah)"/>
+  <!-- public ALB -> edge (web ACL, sign-in), up the gap between the public and application boxes -->
+  <path d="M318,310 H381 V218" marker-end="url(#ah)"/>
+  <!-- api -> jobs queue (up), scheduler -> queue, queue -> worker -->
+  <path d="M552,298 V204" marker-end="url(#ah)"/>
+  <rect class="lbg" x="558" y="250" width="60" height="13"/><text x="563" y="259.5">enqueue</text>
+  <path d="M474,142 H530" marker-end="url(#ah)"/>
+  <rect class="lbg" x="478" y="122" width="48" height="13"/><text x="483" y="131.5">sweeps</text>
+  <path d="M574,142 H640 V298" marker-end="url(#ah)"/>
+  <rect class="lbg" x="646" y="250" width="34" height="13"/><text x="651" y="259.5">poll</text>
+  <!-- worker -> registry (discovery) with taps to the orchestrator (investigations) and the agents gateway (sweeps) -->
+  <path d="M662,322 H740 V254 H1373 V298" marker-end="url(#ah)"/>
+  <path d="M925,254 V298" marker-end="url(#ah)"/>
+  <path d="M1250,254 V298" marker-end="url(#ah)"/>
+  <circle cx="925" cy="254" r="3"/><circle cx="1250" cy="254" r="3"/>
+  <rect class="lbg" x="821" y="258" width="100" height="13"/><text x="826" y="267.5">investigation</text>
+  <rect class="lbg" x="1170" y="258" width="48" height="13"/><text x="1175" y="267.5">sweeps</text>
+  <rect class="lbg" x="1379" y="258" width="70" height="13"/><text x="1384" y="267.5">discovery</text>
+  <!-- agents gateway -> watch (runtime target) -->
+  <path d="M1228,322 H1099" marker-end="url(#ah)"/>
+  <rect class="lbg" x="1104" y="304" width="42" height="13"/><text x="1109" y="313.5">target</text>
+  <!-- orchestrator -> internal ALB (api) -->
+  <path d="M903,322 H820 V442 H726" marker-end="url(#ah)"/>
+  <rect class="lbg" x="782" y="340" width="34" height="13"/><text x="787" y="349.5">api</text>
+  <!-- agents -> tools gateway (MCP); the corridor trunk also feeds the tool servers and Nova -->
+  <path d="M1099,442 H1228" marker-end="url(#ah)"/>
+  <circle cx="1163" cy="442" r="3"/>
+  <rect class="lbg" x="1104" y="424" width="32" height="13"/><text x="1109" y="433.5">MCP</text>
+  <path d="M1163,442 V586 H1131" marker-end="url(#ah)"/>
+  <circle cx="1163" cy="586" r="3"/>
+  <rect class="lbg" x="1000" y="520" width="120" height="13"/><text x="1005" y="529.5">gateway role only</text>
+  <path d="M1163,586 V714 H1228" marker-end="url(#ah)"/>
+  <!-- policy engine -> tools gateway; Nova -> guardrail -->
+  <path d="M1351,442 H1272" marker-end="url(#ah)"/>
+  <rect class="lbg" x="1282" y="424" width="56" height="13"/><text x="1287" y="433.5">enforce</text>
+  <path d="M1272,714 H1351" marker-end="url(#ah)"/>
+  <!-- tool servers -> Aurora; Aurora -> archiver -> S3 -->
+  <path d="M868,586 H816" marker-end="url(#ah)"/>
+  <path d="M770,586 H640" marker-end="url(#ah)"/>
+  <rect class="lbg" x="650" y="568" width="106" height="13"/><text x="655" y="577.5">cold partitions</text>
+  <path d="M594,586 H552" marker-end="url(#ah)"/>
+  <!-- feeds -> NAT -> AIS ingest; AIS ingest -> ElastiCache (events) and Aurora (positions) -->
+  <path d="M111,442 H274" marker-end="url(#ah)"/>
+  <path d="M111,542 H150"/><path d="M111,642 H150"/><path d="M111,742 H150 V442"/>
+  <circle cx="150" cy="442" r="3"/><circle cx="150" cy="542" r="3"/><circle cx="150" cy="642" r="3"/>
+  <rect class="lbg" x="178" y="424" width="42" height="13"/><text x="183" y="433.5">feeds</text>
+  <path d="M318,442 H418" marker-end="url(#ah)"/>
+  <path d="M462,450 H484 V586 H464" marker-end="url(#ah)"/>
+  <rect class="lbg" x="488" y="490" width="48" height="13"/><text x="493" y="499.5">events</text>
+  <path d="M484,534 H792 V562" marker-end="url(#ah)"/>
+  <circle cx="484" cy="534" r="3"/>
+  <rect class="lbg" x="700" y="516" width="64" height="13"/><text x="705" y="525.5">positions</text>
+  <!-- collector -> Grafana stack -->
+  <path d="M462,714 H506" marker-end="url(#ah)"/>
+  <rect class="lbg" x="462" y="696" width="42" height="13"/><text x="467" y="705.5">OTLP</text>
+  <!-- monitoring: straight down from each label to the next icon; sideways to the second column -->
+  <path d="M1656,388 V418" marker-end="url(#ah)"/>
+  <path d="M1656,495 V562" marker-end="url(#ah)"/>
+  <rect class="lbg" x="1662" y="518" width="48" height="13"/><text x="1667" y="527.5">alarms</text>
+  <path d="M1678,322 H1778" marker-end="url(#ah)"/>
+  <rect class="lbg" x="1690" y="304" width="42" height="13"/><text x="1695" y="313.5">spans</text>
+  <path d="M1800,388 V418" marker-end="url(#ah)"/>
+  <path d="M1678,586 H1778" marker-end="url(#ah)"/>
+</svg>
+
+<!-- ===== outside AWS: one column as tall as the cloud box ===== -->
+<div class="grp" style="left:14px;top:66px;width:150px;height:316px"></div>
+<div class="glab c" style="left:14px;top:58px;width:150px"><span class="gi"><img src="icons/aws/users.svg" alt="">Watch floor</span></div>
+<div class="node" style="left:89px;top:108px"><div class="ico"><img src="icons/aws/users.svg" alt=""></div><div class="lb">Watch officers</div></div>
+<div class="node" style="left:89px;top:300px"><div class="ico"><img src="icons/aws/toolkit.svg" alt=""></div><div class="lb">Operators</div></div>
+
+<div class="grp" style="left:14px;top:402px;width:150px;height:418px"></div>
+<div class="glab c" style="left:14px;top:394px;width:150px"><span class="gi"><img src="icons/aws/internet.svg" alt="">External feeds</span></div>
+<div class="node" style="left:89px;top:420px"><div class="ico"><img src="icons/aws/datastream.svg" alt=""></div><div class="lb">AISStream</div></div>
+<div class="node" style="left:89px;top:520px"><div class="ico"><img src="icons/aws/documents.svg" alt=""></div><div class="lb">OpenSanctions</div></div>
+<div class="node" style="left:89px;top:620px"><div class="ico"><img src="icons/aws/globe.svg" alt=""></div><div class="lb">OpenStreetMap</div></div>
+<div class="node" style="left:89px;top:720px"><div class="ico"><img src="icons/aws/camera.svg" alt=""></div><div class="lb">Sentinel imagery</div></div>
+
+<!-- ===== AWS cloud ===== -->
+<div class="grp solid" style="left:210px;top:66px;width:1676px;height:754px;border-radius:14px"></div>
+<div class="glab" style="left:222px;top:58px"><img src="icons/aws/group-aws-cloud-dark.svg" alt="">AWS Cloud · us-east-1 <span class="sub">· four CDK stacks · nothing created outside IaC</span></div>
+
+<!-- top row: edge, jobs, deployment, identity & secrets (icon centres y 142) -->
+<div class="grp" style="left:232px;top:96px;width:160px;height:120px"></div>
+<div class="glab" style="left:242px;top:88px"><img src="icons/aws/waf.svg" alt="">Edge</div>
+<div class="node w84" style="left:275px;top:120px"><div class="ico"><img src="icons/aws/waf.svg" alt=""></div><div class="lb">AWS WAF</div></div>
+<div class="node w84" style="left:350px;top:120px"><div class="ico"><img src="icons/aws/cognito.svg" alt=""></div><div class="lb">Cognito</div></div>
+
+<div class="grp" style="left:396px;top:96px;width:384px;height:120px"></div>
+<div class="glab" style="left:406px;top:88px"><img src="icons/aws/sqs.svg" alt="">Jobs &amp; scheduling</div>
+<div class="node w84" style="left:452px;top:120px"><div class="ico"><img src="icons/aws/eventbridge.svg" alt=""></div><div class="lb">EventBridge Scheduler</div></div>
+<div class="node w84" style="left:552px;top:120px"><div class="ico"><img src="icons/aws/sqs.svg" alt=""></div><div class="lb">SQS job queues</div></div>
+<div class="note" style="left:656px;top:114px;width:116px">Every sweep and investigation is a durable job row; the queues carry ids only, one per kind. The scheduler enqueues timed sweeps.</div>
+
+<div class="grp" style="left:796px;top:96px;width:224px;height:120px"></div>
+<div class="glab" style="left:806px;top:88px"><img src="icons/aws/cdk.svg" alt="">Deployment</div>
+<div class="node w84" style="left:846px;top:120px"><div class="ico"><img src="icons/aws/cdk.svg" alt=""></div><div class="lb">CDK stacks</div></div>
+<div class="node w84" style="left:966px;top:120px"><div class="ico"><img src="icons/aws/ecr.svg" alt=""></div><div class="lb">ECR images</div></div>
+
+<div class="grp" style="left:1036px;top:96px;width:834px;height:120px"></div>
+<div class="glab" style="left:1046px;top:88px"><img src="icons/aws/iam.svg" alt="">Identity, secrets &amp; configuration</div>
+<div class="node w84" style="left:1090px;top:120px"><div class="ico"><img src="icons/aws/iam.svg" alt=""></div><div class="lb">IAM roles</div></div>
+<div class="node w84" style="left:1220px;top:120px"><div class="ico"><img src="icons/aws/secretsmanager.svg" alt=""></div><div class="lb">Secrets Manager</div></div>
+<div class="node w84" style="left:1350px;top:120px"><div class="ico"><img src="icons/aws/kms.svg" alt=""></div><div class="lb">KMS keys</div></div>
+<div class="node w84" style="left:1480px;top:120px"><div class="ico"><img src="icons/aws/parameterstore.svg" alt=""></div><div class="lb">Parameter Store</div></div>
+<div class="node w84" style="left:1610px;top:120px"><div class="ico"><img src="icons/aws/acm.svg" alt=""></div><div class="lb">ACM certificates</div></div>
+<div class="note" style="left:1672px;top:108px;width:188px">One IAM role per runtime and task. Secrets are read by role at start-up, never baked into images: the database password rotates monthly, personal data is encrypted with the data key, the balancers' certificates are issued at deploy time.</div>
+
+<!-- VPC -->
+<div class="grp" style="left:226px;top:236px;width:924px;height:564px"></div>
+<div class="glab" style="left:238px;top:228px"><img src="icons/aws/group-vpc.svg" alt="">VPC</div>
+
+<!-- public subnet -->
+<div class="grp" style="left:240px;top:276px;width:126px;height:382px;border-color:rgba(122,193,148,.6)"></div>
+<div class="glab" style="left:250px;top:268px"><img src="icons/aws/group-public-subnet.svg" alt="">Public</div>
+<div class="node w84" style="left:296px;top:300px"><div class="ico"><img src="icons/aws/alb.svg" alt=""></div><div class="lb">Public ALB</div></div>
+<div class="node w84" style="left:296px;top:420px"><div class="ico"><img src="icons/aws/nat.svg" alt=""></div><div class="lb">NAT gateways</div></div>
+<div class="node w84" style="left:296px;top:564px"><div class="ico"><img src="icons/aws/flowlogs.svg" alt=""></div><div class="lb">VPC flow logs</div></div>
+
+<!-- application on Fargate: columns 440 · 528 · 616 · 704 -->
+<div class="grp" style="left:396px;top:276px;width:366px;height:236px"></div>
+<div class="glab" style="left:406px;top:268px"><img src="icons/aws/group-private-subnet.svg" alt="">Application</div>
+<div class="node w84" style="left:440px;top:300px"><div class="ico"><img class="mark" src="icons/nginx.svg" alt=""></div><div class="lb">Web UI (nginx)</div></div>
+<div class="node w84" style="left:552px;top:300px"><div class="ico"><img class="mark" src="icons/fastapi.svg" alt=""></div><div class="lb">API (FastAPI)</div></div>
+<div class="node w84" style="left:640px;top:300px"><div class="ico"><img class="mark" src="icons/python-light.svg" alt=""></div><div class="lb">Job workers</div></div>
+<div class="node w84" style="left:440px;top:420px"><div class="ico"><img class="mark" src="icons/python-light.svg" alt=""></div><div class="lb">AIS ingest</div></div>
+<div class="node w84" style="left:704px;top:420px"><div class="ico"><img src="icons/aws/alb.svg" alt=""></div><div class="lb">Internal ALB</div></div>
+
+<!-- data (under the application) -->
+<div class="grp" style="left:396px;top:550px;width:454px;height:108px"></div>
+<div class="glab" style="left:588px;top:542px"><img src="icons/aws/group-private-subnet.svg" alt="">Data</div>
+<div class="node w84" style="left:440px;top:564px"><div class="ico"><img src="icons/aws/elasticache.svg" alt=""></div><div class="lb">ElastiCache (Valkey)</div></div>
+<div class="node w84" style="left:528px;top:564px"><div class="ico"><img src="icons/aws/s3.svg" alt=""></div><div class="lb">S3 archive</div></div>
+<div class="node w84" style="left:616px;top:564px"><div class="ico"><img class="mark" src="icons/python-light.svg" alt=""></div><div class="lb">Archiver task</div></div>
+<div class="node w84" style="left:792px;top:564px"><div class="ico"><img src="icons/aws/aurora.svg" alt=""></div><div class="lb">Aurora PostGIS</div></div>
+
+<!-- self-hosted observability (one Fargate task), under the data row -->
+<div class="grp" style="left:396px;top:676px;width:740px;height:110px"></div>
+<div class="glab" style="left:406px;top:668px"><img class="mark" src="icons/grafana.svg" alt="">Monitoring · self-hosted</div>
+<div class="node w84" style="left:440px;top:692px"><div class="ico"><img class="mark" src="icons/opentelemetry-light.svg" alt=""></div><div class="lb">Collector</div></div>
+<div class="node w84" style="left:528px;top:692px"><div class="ico"><img class="mark" src="icons/grafana.svg" alt=""></div><div class="lb">Grafana stack</div></div>
+<div class="note" style="left:600px;top:698px;width:524px">Inside the VPC: Grafana, Tempo, Loki and Prometheus run as one Fargate task and show the platform's own telemetry, which the collector fans out to them; the agents add a second span exporter to the collector so the same board covers them. AgentCore's native telemetry, the alarms and the alert path are AWS services outside the VPC (Monitoring · AWS, right).</div>
+
+<!-- trust boundary between the platform and the agents -->
+<div class="vpill2" style="left:790px;top:380px">no nat · vpce only</div>
+
+<!-- agents -->
+<div class="grp" style="left:852px;top:276px;width:284px;height:236px"></div>
+<div class="glab" style="left:1040px;top:268px"><img src="icons/aws/group-private-subnet.svg" alt="">Agents</div>
+<div class="node" style="left:925px;top:300px"><div class="ico"><img src="icons/aws/agentcore.svg" alt=""></div><div class="lb">Orchestrator (LangGraph)</div></div>
+<div class="node" style="left:1077px;top:300px"><div class="ico"><img src="icons/aws/agentcore.svg" alt=""></div><div class="lb">Watch agent (Strands)</div></div>
+<div class="node" style="left:925px;top:420px"><div class="ico"><img src="icons/aws/agentcore.svg" alt=""></div><div class="lb">Investigator (LangGraph)</div></div>
+<div class="node" style="left:1077px;top:420px"><div class="ico"><img src="icons/aws/agentcore.svg" alt=""></div><div class="lb">Tasking agent (Strands)</div></div>
+
+<!-- tool servers (under the agents) -->
+<div class="grp" style="left:852px;top:550px;width:284px;height:108px"></div>
+<div class="glab" style="left:862px;top:542px"><img src="icons/aws/agentcore.svg" alt="">MCP servers</div>
+<div class="node w70" style="left:890px;top:564px"><div class="ico"><img class="mark" src="icons/modelcontextprotocol-light.svg" alt=""></div><div class="lb">AIS</div></div>
+<div class="node w70" style="left:963px;top:564px"><div class="ico"><img class="mark" src="icons/modelcontextprotocol-light.svg" alt=""></div><div class="lb">Registry</div></div>
+<div class="node w70" style="left:1036px;top:564px"><div class="ico"><img class="mark" src="icons/modelcontextprotocol-light.svg" alt=""></div><div class="lb">Geo</div></div>
+<div class="node w70" style="left:1109px;top:564px"><div class="ico"><img class="mark" src="icons/modelcontextprotocol-light.svg" alt=""></div><div class="lb">Imagery</div></div>
+
+<!-- ===== AgentCore (control plane) ===== -->
+<div class="grp" style="left:1176px;top:276px;width:394px;height:382px"></div>
+<div class="glab" style="left:1462px;top:268px"><img src="icons/aws/agentcore.svg" alt="">AgentCore</div>
+<div class="node" style="left:1250px;top:300px"><div class="ico"><img src="icons/aws/agentcore.svg" alt=""></div><div class="lb">Gateway (agents)</div></div>
+<div class="node" style="left:1373px;top:300px"><div class="ico"><img src="icons/aws/agentcore.svg" alt=""></div><div class="lb">Agent Registry</div></div>
+<div class="node" style="left:1496px;top:300px"><div class="ico"><img src="icons/aws/agentcore.svg" alt=""></div><div class="lb">Identity (keys)</div></div>
+<div class="node" style="left:1250px;top:420px"><div class="ico"><img src="icons/aws/agentcore.svg" alt=""></div><div class="lb">Gateway (tools)</div></div>
+<div class="node" style="left:1373px;top:420px"><div class="ico"><img src="icons/aws/agentcore.svg" alt=""></div><div class="lb">Policy (Cedar)</div></div>
+<div class="node" style="left:1496px;top:420px"><div class="ico"><img src="icons/aws/agentcore.svg" alt=""></div><div class="lb">Memory (vessels)</div></div>
+<div class="node" style="left:1250px;top:564px"><div class="ico"><img src="icons/aws/agentcore.svg" alt=""></div><div class="lb">Evaluations (online)</div></div>
+<div class="node" style="left:1373px;top:564px"><div class="ico"><img src="icons/aws/agentcore.svg" alt=""></div><div class="lb">Harness (pilot)</div></div>
+<div class="node" style="left:1496px;top:564px"><div class="ico"><img src="icons/aws/agentcore.svg" alt=""></div><div class="lb">Config bundle (pilot)</div></div>
+
+<!-- Bedrock -->
+<div class="grp" style="left:1176px;top:676px;width:694px;height:110px"></div>
+<div class="glab" style="left:1188px;top:668px"><img src="icons/aws/bedrock.svg" alt="">Amazon Bedrock <span class="sub">· Nova only</span></div>
+<div class="node" style="left:1250px;top:692px"><div class="ico"><img src="icons/aws/nova.svg" alt=""></div><div class="lb">Amazon Nova</div></div>
+<div class="node" style="left:1373px;top:692px"><div class="ico"><img src="icons/aws/bedrock.svg" alt=""></div><div class="lb">Guardrail</div></div>
+<div class="node" style="left:1496px;top:692px"><div class="ico"><img src="icons/aws/bedrock.svg" alt=""></div><div class="lb">Prompt Management</div></div>
+<div class="note" style="left:1600px;top:698px;width:256px">Nova by tier: Lite for sweeps, Nova 2 Lite for tasking, Pro for investigations and reports, Premier as the step-up. The guardrail runs on every model call; prompts are versioned in Prompt Management.</div>
+
+<!-- Monitoring (AWS side): telemetry column and alerting column -->
+<div class="grp" style="left:1586px;top:276px;width:284px;height:382px"></div>
+<div class="glab c" style="left:1586px;top:268px;width:284px"><span class="gi"><img src="icons/aws/cloudwatch.svg" alt="">Monitoring · AWS</span></div>
+<div class="node" style="left:1656px;top:300px"><div class="ico"><img src="icons/aws/agentcore.svg" alt=""></div><div class="lb">AgentCore Observability</div></div>
+<div class="node" style="left:1800px;top:300px"><div class="ico"><img src="icons/aws/search.svg" alt=""></div><div class="lb">Transaction Search</div></div>
+<div class="node" style="left:1656px;top:420px"><div class="ico"><img src="icons/aws/cloudwatch.svg" alt=""></div><div class="lb">CloudWatch</div></div>
+<div class="node" style="left:1800px;top:420px"><div class="ico"><img src="icons/aws/xray.svg" alt=""></div><div class="lb">X-Ray traces</div></div>
+<div class="node" style="left:1656px;top:564px"><div class="ico"><img src="icons/aws/sns.svg" alt=""></div><div class="lb">SNS alerts</div></div>
+<div class="node" style="left:1800px;top:564px"><div class="ico"><img src="icons/aws/email.svg" alt=""></div><div class="lb">Operator email</div></div>
+
+</body></html>

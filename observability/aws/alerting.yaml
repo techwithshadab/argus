@@ -1,0 +1,150 @@
+# Grafana unified alerting, provisioned: one contact point (the platform's SNS topic, which
+# already carries the CloudWatch alarms and the optional email subscription), one policy, and the
+# rules the operator board shows. ${ALERT_SNS_TOPIC_ARN} and ${AWS_REGION} come from the task env.
+# These rules read the API's metrics, so they all go quiet together when the API or the collector
+# is down: argus-api-scrape-lost is the rule that says so, and the CloudWatch alarms in
+# infra/cdk/stacks/alarms.py cover the infrastructure underneath independently of the API.
+apiVersion: 1
+contactPoints:
+  - orgId: 1
+    name: argus-sns
+    receivers:
+      - uid: argus-sns
+        type: sns
+        settings:
+          topic_arn: ${ALERT_SNS_TOPIC_ARN}
+          subject: "Argus alert: {{ .CommonLabels.alertname }}"
+          sigv4:
+            region: ${AWS_REGION}
+policies:
+  - orgId: 1
+    receiver: argus-sns
+    group_by: [alertname]
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h
+groups:
+  - orgId: 1
+    name: argus-slo
+    folder: Argus
+    interval: 1m
+    rules:
+      - uid: argus-feed-stale
+        title: AIS feed stale
+        condition: C
+        for: 10m
+        labels: {severity: page, persona: operator}
+        annotations: {summary: "No new AIS position for more than 15 minutes", runbook: "docs/RUNBOOK.md#common-failures"}
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model: {expr: "argus_feed_lag_s", refId: A}
+          - refId: B
+            datasourceUid: __expr__
+            model: {type: reduce, expression: A, reducer: last, refId: B}
+          - refId: C
+            datasourceUid: __expr__
+            model: {type: threshold, expression: B, refId: C, conditions: [{evaluator: {type: gt, params: [900]}}]}
+      - uid: argus-completion
+        title: Investigation completion below target
+        condition: C
+        for: 30m
+        labels: {severity: page, persona: operator}
+        annotations: {summary: "Fewer than 90% of investigations complete over the 7-day window"}
+        data:
+          - refId: A
+            relativeTimeRange: {from: 1800, to: 0}
+            datasourceUid: prometheus
+            model: {expr: "argus_investigation_completion_ratio", refId: A}
+          - refId: B
+            datasourceUid: __expr__
+            model: {type: reduce, expression: A, reducer: last, refId: B}
+          - refId: C
+            datasourceUid: __expr__
+            model: {type: threshold, expression: B, refId: C, conditions: [{evaluator: {type: lt, params: [0.9]}}]}
+      - uid: argus-cost-today
+        title: Model spend today above budget
+        condition: C
+        for: 5m
+        labels: {severity: ticket, persona: model-owner}
+        annotations: {summary: "Investigations cost more than the daily budget today"}
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model: {expr: "argus_investigation_cost_usd_today", refId: A}
+          - refId: B
+            datasourceUid: __expr__
+            model: {type: reduce, expression: A, reducer: last, refId: B}
+          - refId: C
+            datasourceUid: __expr__
+            model: {type: threshold, expression: B, refId: C, conditions: [{evaluator: {type: gt, params: [10]}}]}
+      - uid: argus-backlog
+        title: Alerts waiting longer than four hours
+        condition: C
+        for: 15m
+        labels: {severity: ticket, persona: watch-floor}
+        annotations: {summary: "The oldest draft alert has waited more than four hours for a review"}
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model: {expr: "argus_oldest_unreviewed_alert_s", refId: A}
+          - refId: B
+            datasourceUid: __expr__
+            model: {type: reduce, expression: A, reducer: last, refId: B}
+          - refId: C
+            datasourceUid: __expr__
+            model: {type: threshold, expression: B, refId: C, conditions: [{evaluator: {type: gt, params: [14400]}}]}
+      - uid: argus-eval-regression
+        title: Eval gate failed
+        condition: C
+        for: 0m
+        labels: {severity: ticket, persona: model-owner}
+        annotations: {summary: "The latest eval run of a suite missed a floor in evals/thresholds.yaml; do not promote the prompt or model change", runbook: "docs/RUNBOOK.md#alarms"}
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model: {expr: "min(argus_eval_passed)", refId: A}
+          - refId: B
+            datasourceUid: __expr__
+            model: {type: reduce, expression: A, reducer: last, refId: B}
+          - refId: C
+            datasourceUid: __expr__
+            model: {type: threshold, expression: B, refId: C, conditions: [{evaluator: {type: lt, params: [1]}}]}
+      - uid: argus-api-scrape-lost
+        title: API metrics not scraped
+        condition: C
+        for: 5m
+        labels: {severity: page, persona: operator}
+        annotations: {summary: "The collector has not scraped the API for five minutes: every other rule here is blind; the CloudWatch alarms still watch the infrastructure", runbook: "docs/RUNBOOK.md#alarms"}
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model: {expr: "max(up{job=\"argus-api\"}) or vector(0)", refId: A}
+          - refId: B
+            datasourceUid: __expr__
+            model: {type: reduce, expression: A, reducer: last, refId: B}
+          - refId: C
+            datasourceUid: __expr__
+            model: {type: threshold, expression: B, refId: C, conditions: [{evaluator: {type: lt, params: [1]}}]}
+      - uid: argus-rejections
+        title: Policy or schema rejections rising
+        condition: C
+        for: 30m
+        labels: {severity: ticket, persona: model-owner}
+        annotations: {summary: "More than ten report or tasking drafts rejected in 24 hours; check the latest prompt or model change"}
+        data:
+          - refId: A
+            relativeTimeRange: {from: 1800, to: 0}
+            datasourceUid: prometheus
+            model: {expr: "argus_node_rejections_24h", refId: A}
+          - refId: B
+            datasourceUid: __expr__
+            model: {type: reduce, expression: A, reducer: last, refId: B}
+          - refId: C
+            datasourceUid: __expr__
+            model: {type: threshold, expression: B, refId: C, conditions: [{evaluator: {type: gt, params: [10]}}]}

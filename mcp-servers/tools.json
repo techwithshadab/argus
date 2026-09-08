@@ -1,0 +1,743 @@
+{
+  "servers": {
+    "ais": {
+      "description": "Tools for querying vessel AIS tracks and detecting AIS gaps, MMSI spoofing, loitering, rendezvous and zone incursions.",
+      "tools": [
+        {
+          "description": "Find vessels that stayed within `max_radius_nm` for at least `min_duration_minutes` at low speed,\n    excluding vessels reporting at_anchor inside a declared anchorage. Reports which zones the loiter box intersects.",
+          "inputSchema": {
+            "properties": {
+              "hours": {
+                "default": 24,
+                "title": "Hours",
+                "type": "number"
+              },
+              "max_radius_nm": {
+                "default": 2.0,
+                "title": "Max Radius Nm",
+                "type": "number"
+              },
+              "max_speed_kn": {
+                "default": 3.0,
+                "title": "Max Speed Kn",
+                "type": "number"
+              },
+              "min_duration_minutes": {
+                "default": 90,
+                "title": "Min Duration Minutes",
+                "type": "integer"
+              },
+              "until": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Until"
+              }
+            },
+            "title": "detect_loiteringArguments",
+            "type": "object"
+          },
+          "name": "detect_loitering"
+        },
+        {
+          "description": "Detect a single MMSI being broadcast from two places at once (identity spoofing):\n    consecutive reports whose implied speed exceeds `max_plausible_speed_kn`.",
+          "inputSchema": {
+            "properties": {
+              "hours": {
+                "default": 24,
+                "title": "Hours",
+                "type": "number"
+              },
+              "max_plausible_speed_kn": {
+                "default": 40,
+                "title": "Max Plausible Speed Kn",
+                "type": "number"
+              },
+              "until": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Until"
+              }
+            },
+            "title": "detect_mmsi_conflictsArguments",
+            "type": "object"
+          },
+          "name": "detect_mmsi_conflicts"
+        },
+        {
+          "description": "Find pairs of vessels that remained within `max_separation_nm` of each other for at least `min_minutes`\n    (possible ship-to-ship transfer).",
+          "inputSchema": {
+            "properties": {
+              "hours": {
+                "default": 24,
+                "title": "Hours",
+                "type": "number"
+              },
+              "max_separation_nm": {
+                "default": 0.5,
+                "title": "Max Separation Nm",
+                "type": "number"
+              },
+              "min_minutes": {
+                "default": 30,
+                "title": "Min Minutes",
+                "type": "integer"
+              },
+              "until": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Until"
+              }
+            },
+            "title": "detect_rendezvousArguments",
+            "type": "object"
+          },
+          "name": "detect_rendezvous"
+        },
+        {
+          "description": "Find periods where a vessel stopped transmitting for at least `min_gap_minutes`.\n    Includes the last position before the gap, the first after it, and the implied distance and speed.",
+          "inputSchema": {
+            "properties": {
+              "hours": {
+                "default": 24,
+                "title": "Hours",
+                "type": "number"
+              },
+              "min_gap_minutes": {
+                "default": 30,
+                "title": "Min Gap Minutes",
+                "type": "integer"
+              },
+              "mmsi": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Mmsi"
+              },
+              "until": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Until"
+              }
+            },
+            "title": "find_ais_gapsArguments",
+            "type": "object"
+          },
+          "name": "find_ais_gaps"
+        },
+        {
+          "description": "Vessels that reported within `radius_nm` of a point around `at_time` (ISO). Useful for 'who was nearby'.",
+          "inputSchema": {
+            "properties": {
+              "at_time": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "At Time"
+              },
+              "lat": {
+                "title": "Lat",
+                "type": "number"
+              },
+              "lon": {
+                "title": "Lon",
+                "type": "number"
+              },
+              "radius_nm": {
+                "default": 10,
+                "title": "Radius Nm",
+                "type": "number"
+              },
+              "tolerance_minutes": {
+                "default": 30,
+                "title": "Tolerance Minutes",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "lon",
+              "lat"
+            ],
+            "title": "find_vessels_nearArguments",
+            "type": "object"
+          },
+          "name": "find_vessels_near"
+        },
+        {
+          "description": "Latest known position and static data for a vessel.",
+          "inputSchema": {
+            "properties": {
+              "mmsi": {
+                "title": "Mmsi",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "mmsi"
+            ],
+            "title": "get_latest_positionArguments",
+            "type": "object"
+          },
+          "name": "get_latest_position"
+        },
+        {
+          "description": "Return the AIS track (time-ordered positions) for a vessel over the last `hours` before `until` (ISO time, defaults to scenario end). Downsampled to `max_points` (default 120; a sweep that reads several tracks must fit the model context).",
+          "inputSchema": {
+            "properties": {
+              "hours": {
+                "default": 24,
+                "title": "Hours",
+                "type": "number"
+              },
+              "max_points": {
+                "default": 120,
+                "title": "Max Points",
+                "type": "integer"
+              },
+              "mmsi": {
+                "title": "Mmsi",
+                "type": "integer"
+              },
+              "until": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Until"
+              }
+            },
+            "required": [
+              "mmsi"
+            ],
+            "title": "get_vessel_trackArguments",
+            "type": "object"
+          },
+          "name": "get_vessel_track"
+        },
+        {
+          "description": "Alerts already raised by the watch agent, so agents do not duplicate work.",
+          "inputSchema": {
+            "properties": {
+              "mmsi": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Mmsi"
+              }
+            },
+            "title": "list_open_alertsArguments",
+            "type": "object"
+          },
+          "name": "list_open_alerts"
+        },
+        {
+          "description": "List vessels that reported at least one position in the window, with their latest position.",
+          "inputSchema": {
+            "properties": {
+              "hours": {
+                "default": 24,
+                "title": "Hours",
+                "type": "number"
+              },
+              "until": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Until"
+              }
+            },
+            "title": "list_vesselsArguments",
+            "type": "object"
+          },
+          "name": "list_vessels"
+        },
+        {
+          "description": "List vessels whose positions fell inside zones of the given kinds (default: exclusion and protected_cable).",
+          "inputSchema": {
+            "properties": {
+              "hours": {
+                "default": 24,
+                "title": "Hours",
+                "type": "number"
+              },
+              "kinds": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Kinds"
+              },
+              "until": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Until"
+              }
+            },
+            "title": "list_zone_incursionsArguments",
+            "type": "object"
+          },
+          "name": "list_zone_incursions"
+        }
+      ]
+    },
+    "geo": {
+      "description": "Geospatial context: protected zones, nearest ports, distances and reverse geocoding.",
+      "tools": [
+        {
+          "description": "Great-circle distance between two points in nautical miles.",
+          "inputSchema": {
+            "properties": {
+              "lat1": {
+                "title": "Lat1",
+                "type": "number"
+              },
+              "lat2": {
+                "title": "Lat2",
+                "type": "number"
+              },
+              "lon1": {
+                "title": "Lon1",
+                "type": "number"
+              },
+              "lon2": {
+                "title": "Lon2",
+                "type": "number"
+              }
+            },
+            "required": [
+              "lon1",
+              "lat1",
+              "lon2",
+              "lat2"
+            ],
+            "title": "distance_nmArguments",
+            "type": "object"
+          },
+          "name": "distance_nm"
+        },
+        {
+          "description": "All declared zones (protected cables, exclusion areas, port approaches, anchorages) with their properties.",
+          "inputSchema": {
+            "properties": {},
+            "title": "list_zonesArguments",
+            "type": "object"
+          },
+          "name": "list_zones"
+        },
+        {
+          "description": "Nearest ports to a point with distance in nautical miles.",
+          "inputSchema": {
+            "properties": {
+              "lat": {
+                "title": "Lat",
+                "type": "number"
+              },
+              "limit": {
+                "default": 3,
+                "title": "Limit",
+                "type": "integer"
+              },
+              "lon": {
+                "title": "Lon",
+                "type": "number"
+              }
+            },
+            "required": [
+              "lon",
+              "lat"
+            ],
+            "title": "nearest_portsArguments",
+            "type": "object"
+          },
+          "name": "nearest_ports"
+        },
+        {
+          "description": "Which zones contain (or are within `buffer_nm` of) a point.",
+          "inputSchema": {
+            "properties": {
+              "buffer_nm": {
+                "default": 0,
+                "title": "Buffer Nm",
+                "type": "number"
+              },
+              "lat": {
+                "title": "Lat",
+                "type": "number"
+              },
+              "lon": {
+                "title": "Lon",
+                "type": "number"
+              }
+            },
+            "required": [
+              "lon",
+              "lat"
+            ],
+            "title": "point_in_zonesArguments",
+            "type": "object"
+          },
+          "name": "point_in_zones"
+        },
+        {
+          "description": "Human-readable description of a location (Nominatim, no key, rate-limited). Falls back to nearest port.",
+          "inputSchema": {
+            "properties": {
+              "lat": {
+                "title": "Lat",
+                "type": "number"
+              },
+              "lon": {
+                "title": "Lon",
+                "type": "number"
+              }
+            },
+            "required": [
+              "lon",
+              "lat"
+            ],
+            "title": "reverse_geocodeArguments",
+            "type": "object"
+          },
+          "name": "reverse_geocode"
+        }
+      ]
+    },
+    "imagery": {
+      "description": "Search satellite imagery archives and propose collection (re-look) tasking for human approval.",
+      "tools": [
+        {
+          "description": "Propose a collection request (SAR re-look, optical, patrol aircraft) for HUMAN APPROVAL. Creates a record with status 'proposed'.\n    sensor: sentinel-1-sar | sentinel-2-optical | commercial-sar | patrol-aircraft.",
+          "inputSchema": {
+            "properties": {
+              "center_lat": {
+                "title": "Center Lat",
+                "type": "number"
+              },
+              "center_lon": {
+                "title": "Center Lon",
+                "type": "number"
+              },
+              "mmsi": {
+                "title": "Mmsi",
+                "type": "integer"
+              },
+              "priority": {
+                "default": "routine",
+                "title": "Priority",
+                "type": "string"
+              },
+              "radius_nm": {
+                "title": "Radius Nm",
+                "type": "number"
+              },
+              "rationale": {
+                "title": "Rationale",
+                "type": "string"
+              },
+              "sensor": {
+                "title": "Sensor",
+                "type": "string"
+              },
+              "window_end": {
+                "title": "Window End",
+                "type": "string"
+              },
+              "window_start": {
+                "title": "Window Start",
+                "type": "string"
+              }
+            },
+            "required": [
+              "mmsi",
+              "sensor",
+              "center_lon",
+              "center_lat",
+              "radius_nm",
+              "window_start",
+              "window_end",
+              "rationale"
+            ],
+            "title": "create_tasking_requestArguments",
+            "type": "object"
+          },
+          "name": "create_tasking_request"
+        },
+        {
+          "description": "Rough estimate of the next Sentinel pass over a point, from the most recent archived scene plus the nominal revisit period.\n    This is an estimate for planning, not an orbital prediction.",
+          "inputSchema": {
+            "properties": {
+              "collection": {
+                "default": "SENTINEL-1",
+                "title": "Collection",
+                "type": "string"
+              },
+              "lat": {
+                "title": "Lat",
+                "type": "number"
+              },
+              "lon": {
+                "title": "Lon",
+                "type": "number"
+              }
+            },
+            "required": [
+              "lon",
+              "lat"
+            ],
+            "title": "estimate_next_passArguments",
+            "type": "object"
+          },
+          "name": "estimate_next_pass"
+        },
+        {
+          "description": "Existing tasking requests, to avoid duplicates.",
+          "inputSchema": {
+            "properties": {
+              "mmsi": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Mmsi"
+              }
+            },
+            "title": "list_tasking_requestsArguments",
+            "type": "object"
+          },
+          "name": "list_tasking_requests"
+        },
+        {
+          "description": "Find archived Sentinel scenes intersecting a point between `start` and `end` (ISO dates).\n    collection: SENTINEL-1 (SAR, sees through cloud and darkness) or SENTINEL-2 (optical).",
+          "inputSchema": {
+            "properties": {
+              "collection": {
+                "default": "SENTINEL-1",
+                "title": "Collection",
+                "type": "string"
+              },
+              "end": {
+                "title": "End",
+                "type": "string"
+              },
+              "lat": {
+                "title": "Lat",
+                "type": "number"
+              },
+              "lon": {
+                "title": "Lon",
+                "type": "number"
+              },
+              "max_results": {
+                "default": 5,
+                "title": "Max Results",
+                "type": "integer"
+              },
+              "start": {
+                "title": "Start",
+                "type": "string"
+              }
+            },
+            "required": [
+              "lon",
+              "lat",
+              "start",
+              "end"
+            ],
+            "title": "search_sentinel_scenesArguments",
+            "type": "object"
+          },
+          "name": "search_sentinel_scenes"
+        }
+      ]
+    },
+    "registry": {
+      "description": "Vessel identity, ownership, flag history, fleet associations and sanctions screening.",
+      "tools": [
+        {
+          "description": "Flag changes over time. Frequent reflagging is a classic deceptive-shipping indicator.",
+          "inputSchema": {
+            "properties": {
+              "mmsi": {
+                "title": "Mmsi",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "mmsi"
+            ],
+            "title": "flag_historyArguments",
+            "type": "object"
+          },
+          "name": "flag_history"
+        },
+        {
+          "description": "Other vessels under the same registered owner, operator or beneficial owner.",
+          "inputSchema": {
+            "properties": {
+              "mmsi": {
+                "title": "Mmsi",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "mmsi"
+            ],
+            "title": "fleet_associationsArguments",
+            "type": "object"
+          },
+          "name": "fleet_associations"
+        },
+        {
+          "description": "Identity and ownership record for a vessel by MMSI or IMO. Includes flag history and notes.",
+          "inputSchema": {
+            "properties": {
+              "imo": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Imo"
+              },
+              "mmsi": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Mmsi"
+              }
+            },
+            "title": "lookup_vesselArguments",
+            "type": "object"
+          },
+          "name": "lookup_vessel"
+        },
+        {
+          "description": "The ownership network around a vessel, up to `depth` hops: registered owner, operator and\n    beneficial owner, the other vessels they own or operate, sanction listings of any party, flag\n    history, and vessels this one has rendezvoused with at sea. Returns nodes, typed edges, and the\n    shortest path from the vessel to every sanction listing reached. depth=2 answers \"who controls\n    this vessel and are they listed\"; depth=3 shows what the controllers' other vessels connect to.",
+          "inputSchema": {
+            "properties": {
+              "depth": {
+                "default": 2,
+                "title": "Depth",
+                "type": "integer"
+              },
+              "mmsi": {
+                "title": "Mmsi",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "mmsi"
+            ],
+            "title": "ownership_networkArguments",
+            "type": "object"
+          },
+          "name": "ownership_network"
+        },
+        {
+          "description": "Screen a vessel, owner or operator name against sanctions lists.\n    Uses the local list, and OpenSanctions when an API key is configured.",
+          "inputSchema": {
+            "properties": {
+              "entity_name": {
+                "title": "Entity Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "entity_name"
+            ],
+            "title": "sanctions_screenArguments",
+            "type": "object"
+          },
+          "name": "sanctions_screen"
+        }
+      ]
+    }
+  },
+  "version": "0.2.0"
+}

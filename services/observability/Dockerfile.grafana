@@ -1,0 +1,11 @@
+# Grafana with the repo's dashboards and the AWS datasources (everything on localhost in the task).
+FROM grafana/grafana:12.0.2
+COPY observability/aws/datasources.yaml /etc/grafana/provisioning/datasources/datasources.yaml
+COPY observability/aws/dashboards.yaml /etc/grafana/provisioning/dashboards/dashboards.yaml
+COPY observability/aws/dashboards /etc/grafana/dashboards
+COPY observability/aws/alerting.yaml /etc/grafana/provisioning/alerting/alerting.yaml
+ENV GF_FEATURE_TOGGLES_ENABLE=traceqlEditor,traceToMetrics GF_SECURITY_ADMIN_USER=admin GF_ANALYTICS_REPORTING_ENABLED=false
+# The admin password comes from a Secrets Manager secret. Grafana applies
+# GF_SECURITY_ADMIN_PASSWORD only when it initialises an empty database, so a database that
+# outlives a redeploy would keep an old password; reset it on every start (harmless when empty).
+ENTRYPOINT ["/bin/sh", "-c", "grafana cli --homepath /usr/share/grafana admin reset-admin-password \"$GF_SECURITY_ADMIN_PASSWORD\" >/dev/null 2>&1 || true; exec /run.sh"]

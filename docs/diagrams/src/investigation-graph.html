@@ -1,0 +1,138 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="_design.css">
+<style>
+  /* Investigation graph. Dark variant of the shared palette so the official AWS
+     icons and product marks read as in AWS reference architectures. One icon and one name per
+     node; boxes sized to their content; rows aligned across boxes (icon centres at y 322, 442, 586, 706; top row 142); connectors solid and orthogonal, icon edge to icon edge, with junction dots where a
+     line branches, and no connector crossing another, an icon or a label.
+     Icons: docs/diagrams/src/icons (see README). */
+  body{width:1680px;height:512px;background:radial-gradient(1400px 800px at 30% 20%,#12304A,#0B1F33 60%,#081726);color:#F1F4F5}
+  .ttl{position:absolute;left:0;right:0;top:14px;text-align:center;font-family:var(--mono);font-size:18px;font-weight:600;letter-spacing:3.6px;text-transform:uppercase;color:#F1F4F5}
+  .legend{position:absolute;right:28px;top:20px;display:flex;gap:14px;align-items:center;font-size:10.5px;color:rgba(241,244,245,.75)}
+  .legend span{display:flex;align-items:center;gap:5px}
+  .grp{position:absolute;border:1.5px dashed rgba(143,201,214,.38);border-radius:12px}
+  .grp.solid{border-style:solid;border-color:rgba(143,201,214,.4)}
+  .glab{position:absolute;display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:1.4px;text-transform:uppercase;color:#CFE3EA;background:#0E2740;padding:2px 8px 2px 4px;border-radius:6px;white-space:nowrap;z-index:1}
+  .glab img{width:18px;height:18px;display:block}
+  .glab .sub{font-family:var(--font);font-size:9.5px;font-weight:500;letter-spacing:0;text-transform:none;color:rgba(241,244,245,.6)}
+  .glab.c{background:transparent;padding:0;justify-content:center}
+  .glab.c .gi{display:flex;align-items:center;gap:7px;background:#0E2740;padding:2px 8px 2px 4px;border-radius:6px}
+  .node{position:absolute;width:100px;margin-left:-50px;text-align:center;z-index:1}
+  .node.w84{width:84px;margin-left:-42px}
+  .node.w70{width:70px;margin-left:-35px}
+  .node .ico{width:44px;height:44px;margin:0 auto;display:flex;align-items:center;justify-content:center}
+  .node .ico img{width:44px;height:44px;display:block;border-radius:6px}
+  .node .ico img.mark{width:40px;height:40px;border-radius:0}
+  .node .lb{font-size:10.5px;font-weight:600;line-height:1.2;margin-top:10px;color:#F1F4F5;display:inline-block;padding:1px 0}
+  .feed{position:absolute;display:flex;align-items:center;gap:8px;font-size:10.5px;font-weight:600;color:#F1F4F5;z-index:1}
+  .feed img{width:26px;height:26px;display:block}
+  .feed span{font-weight:500;color:rgba(241,244,245,.62);font-size:9.5px}
+  .note{position:absolute;font-size:9.5px;color:rgba(241,244,245,.62);line-height:1.4;z-index:1}
+  .vpill2{position:absolute;background:#0B1F33;border:1.5px dashed #E25B50;border-radius:20px;padding:10px 6px;font-family:var(--mono);font-size:9px;font-weight:600;letter-spacing:1.5px;color:#F2A59D;writing-mode:vertical-rl;transform:rotate(180deg);text-transform:uppercase;z-index:1}
+  svg.wires{position:absolute;left:0;top:0;width:1680px;height:512px;pointer-events:none;z-index:0}
+  svg.wires > path{fill:none;stroke:#8FC9D6;stroke-width:2}
+  svg.wires circle{fill:#8FC9D6}
+  svg.wires text{font-family:"Geist Mono",Menlo,monospace;font-size:9px;font-weight:600;fill:#CFE3EA;letter-spacing:.4px}
+  svg.wires rect.lbg{fill:#0E2740;rx:4}
+</style></head>
+<body>
+
+<div class="ttl">Argus investigation graph</div>
+<div class="legend">
+  <span><svg width="26" height="10"><line x1="0" y1="5" x2="18" y2="5" stroke="#8FC9D6" stroke-width="2"/><polygon points="18,1.5 25,5 18,8.5" fill="#8FC9D6"/></svg> call · data flow</span>
+  <span><svg width="24" height="10"><line x1="0" y1="5" x2="24" y2="5" stroke="#E25B50" stroke-width="2" stroke-dasharray="5 4"/></svg> trust boundary</span>
+  <span><span style="width:11px;height:11px;border:1.5px dashed rgba(143,201,214,.55);border-radius:3px;display:inline-block"></span> group</span>
+</div>
+
+<!-- PLAN: rows (icon centre y) r1 162 · r2 282 · r3 402. columns: triggers 105; job 303; graph 500 · 640 · 780 · 920 · 1060 · 1200;
+     watch floor 1420 · 1540. The graph runs left to right on r2; the two Investigator branches sit on r1 and r3 and
+     join at x 500; the retry loop uses y 220; the proposal uses r3; vessel memory sits on r1 at the end. -->
+<svg class="wires" viewBox="0 0 1680 512">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8FC9D6"/></marker>
+  </defs>
+  <!-- three triggers, one durable job (idempotency key) -->
+  <path d="M127,162 H160 V402 H127"/>
+  <path d="M127,282 H160"/>
+  <path d="M160,282 H281" marker-end="url(#ah)"/>
+  <circle cx="160" cy="282" r="3"/>
+  <rect class="lbg" x="178" y="264" width="74" height="13"/><text x="183" y="273.5">idempotent</text>
+  <!-- the worker invokes the orchestrator; both branches start at once -->
+  <path d="M348,282 H480 V162 H518" marker-end="url(#ah)"/>
+  <path d="M480,282 V402 H518" marker-end="url(#ah)"/>
+  <circle cx="480" cy="282" r="3"/>
+  <!-- the branches join into the pure merge -->
+  <path d="M540,224 V282 H658" marker-end="url(#ah)"/>
+  <path d="M540,378 V282"/>
+  <circle cx="540" cy="282" r="3"/>
+  <!-- merge -> tasking -> report -> policy -> persist -->
+  <path d="M702,282 H798" marker-end="url(#ah)"/>
+  <rect class="lbg" x="708" y="264" width="84" height="13"/><text x="713" y="273.5">evidence gap</text>
+  <path d="M842,282 H938" marker-end="url(#ah)"/>
+  <rect class="lbg" x="852" y="264" width="66" height="13"/><text x="857" y="273.5">proposal</text>
+  <path d="M982,282 H1078" marker-end="url(#ah)"/>
+  <rect class="lbg" x="1000" y="264" width="42" height="13"/><text x="1005" y="273.5">draft</text>
+  <path d="M1100,260 V220 H960 V258" marker-end="url(#ah)"/>
+  <rect class="lbg" x="980" y="202" width="98" height="13"/><text x="985" y="211.5">one correction</text>
+  <path d="M1122,282 H1218" marker-end="url(#ah)"/>
+  <rect class="lbg" x="1132" y="264" width="70" height="13"/><text x="1137" y="273.5">validated</text>
+  <!-- what the vessel is remembered by, and what the next run starts with -->
+  <path d="M1240,260 V208" marker-end="url(#ah)"/>
+  <rect class="lbg" x="1150" y="224" width="84" height="13"/><text x="1155" y="233.5">assessment</text>
+  <path d="M1218,162 H562" marker-end="url(#ah)"/>
+  <rect class="lbg" x="800" y="144" width="92" height="13"/><text x="805" y="153.5">prior context</text>
+  <!-- the tasking proposal takes its own path to the floor -->
+  <path d="M820,331 V402 H1438" marker-end="url(#ah)"/>
+  <rect class="lbg" x="1340" y="384" width="66" height="13"/><text x="1345" y="393.5">proposal</text>
+  <!-- the report reaches the floor as a draft; officers decide; every decision is recorded -->
+  <path d="M1262,282 H1438" marker-end="url(#ah)"/>
+  <rect class="lbg" x="1340" y="264" width="60" height="13"/><text x="1345" y="273.5">AI draft</text>
+  <path d="M1482,282 H1558" marker-end="url(#ah)"/>
+  <path d="M1482,402 H1520 V331" marker-end="url(#ah)"/>
+  <path d="M1580,331 V378" marker-end="url(#ah)"/>
+  <rect class="lbg" x="1586" y="340" width="48" height="13"/><text x="1591" y="349.5">audit</text>
+</svg>
+
+<!-- ===== triggers ===== -->
+<div class="grp" style="left:20px;top:124px;width:170px;height:360px"></div>
+<div class="glab c" style="left:20px;top:116px;width:170px"><span class="gi"><img src="icons/aws/alert.svg" alt="">Triggers</span></div>
+<div class="node" style="left:105px;top:140px"><div class="ico"><img src="icons/aws/alert.svg" alt=""></div><div class="lb">Severe alert (policy)</div></div>
+<div class="node" style="left:105px;top:260px"><div class="ico"><img src="icons/aws/users.svg" alt=""></div><div class="lb">Watch officer request</div></div>
+<div class="node" style="left:105px;top:380px"><div class="ico"><img src="icons/aws/search.svg" alt=""></div><div class="lb">Eval or demo run</div></div>
+
+<!-- ===== the durable job ===== -->
+<div class="grp" style="left:256px;top:244px;width:140px;height:104px"></div>
+<div class="glab" style="left:266px;top:236px"><img src="icons/aws/queue.svg" alt="">Job</div>
+<div class="node" style="left:326px;top:260px"><div class="ico"><img src="icons/aws/queue.svg" alt=""></div><div class="lb">Durable job row</div></div>
+
+<!-- boundary: the worker invokes the orchestrator with its own role -->
+<div class="vpill2" style="left:416px;top:318px">one role each</div>
+
+<!-- ===== the orchestrator: a graph in code ===== -->
+<div class="grp" style="left:460px;top:124px;width:840px;height:360px"></div>
+<div class="glab" style="left:470px;top:116px"><img src="icons/aws/agentcore.svg" alt="">Orchestrator <span class="sub">· a graph in code; no model chooses the sequence</span></div>
+<div class="node" style="left:540px;top:140px"><div class="ico"><img src="icons/aws/agentcore.svg" alt=""></div><div class="lb">Investigator · identity</div></div>
+<div class="node" style="left:540px;top:380px"><div class="ico"><img src="icons/aws/agentcore.svg" alt=""></div><div class="lb">Investigator · behaviour</div></div>
+<div class="node" style="left:680px;top:260px"><div class="ico"><img src="icons/aws/code.svg" alt=""></div><div class="lb">Merge (pure function)</div></div>
+<div class="node" style="left:820px;top:260px"><div class="ico"><img src="icons/aws/agentcore.svg" alt=""></div><div class="lb">Tasking agent</div></div>
+<div class="node" style="left:960px;top:260px"><div class="ico"><img src="icons/aws/agentcore.svg" alt=""></div><div class="lb">Report writer</div></div>
+<div class="node" style="left:1100px;top:260px"><div class="ico"><img src="icons/aws/shield.svg" alt=""></div><div class="lb">Policy and schema check</div></div>
+<div class="node" style="left:1240px;top:260px"><div class="ico"><img src="icons/aws/database.svg" alt=""></div><div class="lb">Persist report, snapshots, manifest</div></div>
+<div class="node" style="left:1240px;top:140px"><div class="ico"><img src="icons/aws/agentcore.svg" alt=""></div><div class="lb">Vessel memory</div></div>
+<div class="note" style="left:640px;top:420px;width:600px">A branch steps up one model tier when its answer fails validation or the model is throttled, and degrades to a named gap if it still fails; the case fails only if both branches do. Every model call runs behind the guardrail; a report that fails the policy is retried once, then the case fails closed.</div>
+
+<!-- boundary: only drafts and proposals cross to the floor -->
+<div class="vpill2" style="left:1328px;top:140px">humans decide</div>
+
+<!-- ===== watch floor ===== -->
+<div class="grp" style="left:1400px;top:244px;width:240px;height:240px"></div>
+<div class="glab c" style="left:1400px;top:236px;width:240px"><span class="gi"><img src="icons/aws/users.svg" alt="">Watch floor</span></div>
+<div class="node" style="left:1460px;top:260px"><div class="ico"><img src="icons/aws/documents.svg" alt=""></div><div class="lb">Review report</div></div>
+<div class="node" style="left:1580px;top:260px"><div class="ico"><img src="icons/aws/users.svg" alt=""></div><div class="lb">Watch officers</div></div>
+<div class="node" style="left:1460px;top:380px"><div class="ico"><img src="icons/aws/shield.svg" alt=""></div><div class="lb">Approve tasking</div></div>
+<div class="node" style="left:1580px;top:380px"><div class="ico"><img src="icons/aws/logs.svg" alt=""></div><div class="lb">Audit log</div></div>
+
+</body></html>

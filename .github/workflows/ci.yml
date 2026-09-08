@@ -1,0 +1,43 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - uses: actions/setup-node@v4
+        with: {node-version: "22"}
+      - run: pip install ruff==0.16.5 pytest==9.1.1 pyyaml==6.0.3 pydantic==2.13.5
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: pytest -q -m "not integration"
+      - name: cdk synth
+        env: {CDK_DEFAULT_ACCOUNT: "123456789012", CDK_DEFAULT_REGION: us-east-1}
+        run: |
+          pip install -r infra/cdk/requirements.txt
+          npm install -g aws-cdk@2
+          cd infra/cdk && cdk synth --all -q || true   # AZ lookup needs credentials; templates still render
+      - name: compose config
+        run: docker compose config -q
+
+  # Deterministic detector evals against a real PostGIS (phase 5). No model involved.
+  detectors:
+    runs-on: ubuntu-latest
+    services:
+      postgis:
+        image: postgis/postgis:17-3.5
+        env: {POSTGRES_USER: argus, POSTGRES_PASSWORD: argus, POSTGRES_DB: argus}
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U argus -d argus" --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install pytest==9.1.1 pyyaml==6.0.3 pydantic==2.13.5 -r mcp-servers/requirements.txt
+      - run: pytest -q -m integration tests/integration
+        env:
+          DATABASE_URL: postgresql://argus:argus@localhost:5432/argus
+          DATA_KEY: ci-data-key

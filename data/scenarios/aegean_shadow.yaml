@@ -1,0 +1,122 @@
+# Synthetic maritime scenario 2: Aegean approaches, south of Crete. Everything here is fictional.
+# Different anomaly mix from east_med_baseline: a zone incursion loiter, a long dark gap, a spoof.
+name: aegean_shadow
+seed: 7
+start_time: "2026-09-02T00:00:00Z"
+duration_minutes: 480
+interval_seconds: 60
+bbox: {min_lon: 23.0, min_lat: 33.6, max_lon: 26.6, max_lat: 35.4}
+
+zones:
+  - name: "Subsea Cable Corridor Lambda"
+    kind: protected_cable
+    polygon: [[24.2, 34.3], [25.6, 34.55], [25.65, 34.35], [24.25, 34.1]]
+    properties: {owner: "Fictional Cable Consortium", buffer_nm: 3}
+  - name: "Naval Exercise Area Sigma (NOTMAR 231/26)"
+    kind: exclusion
+    polygon: [[25.3, 33.7], [26.2, 33.7], [26.2, 34.1], [25.3, 34.1]]
+    properties: {active_until: "2026-09-04T00:00:00Z"}
+  - name: "Souda Anchorage"
+    kind: anchorage
+    polygon: [[24.0, 35.45], [24.2, 35.45], [24.2, 35.55], [24.0, 35.55]]
+
+vessels:
+  - mmsi: 239111101
+    imo: 9420101
+    name: "KRITI EXPRESS"
+    flag: GR
+    ship_type: ro_ro
+    length_m: 170
+    behaviours:
+      - {type: transit, waypoints: [[23.2, 35.1], [24.6, 34.9], [26.4, 35.2]], speed_kn: 18}
+  - mmsi: 636333102
+    imo: 9420102
+    name: "SILVER TIDE"
+    flag: LR
+    ship_type: bulk_carrier
+    length_m: 225
+    behaviours:
+      - {type: transit, waypoints: [[26.4, 33.9], [25.0, 34.0], [23.2, 34.4]], speed_kn: 12}
+  - mmsi: 244555103
+    imo: 9420103
+    name: "NOORDZEE 9"
+    flag: NL
+    ship_type: fishing
+    length_m: 32
+    behaviours:
+      - {type: fishing_pattern, center: [23.8, 34.3], radius_nm: 5, speed_kn: 4.5}
+  - mmsi: 209666104
+    imo: 9420104
+    name: "PELAGOS SUPPLY"
+    flag: CY
+    ship_type: offshore_supply
+    length_m: 82
+    behaviours:
+      - {type: transit, waypoints: [[24.1, 35.5], [24.4, 34.9], [24.9, 34.6]], speed_kn: 11}
+      - {type: anchor, at: [24.9, 34.6], duration_min: 150}
+
+  # Anomalous traffic. Ground truth for evaluation is derived from these blocks.
+  - mmsi: 511777105
+    imo: 9420105
+    name: "CORAL DAWN"
+    flag: PW
+    ship_type: tanker
+    length_m: 230
+    behaviours:
+      - {type: transit, waypoints: [[26.3, 34.7], [25.4, 34.45]], speed_kn: 13}
+      - {type: dark_gap, duration_min: 150, drift_waypoints: [[25.4, 34.45], [24.7, 34.3]], speed_kn: 5}
+      - {type: transit, waypoints: [[24.7, 34.3], [23.3, 34.0]], speed_kn: 13}
+  - mmsi: 422777106
+    imo: 9420106
+    name: "SAHAND 5"
+    flag: IR
+    ship_type: tanker
+    length_m: 190
+    behaviours:
+      - {type: transit, waypoints: [[26.5, 33.5], [25.8, 33.9]], speed_kn: 9}
+      - {type: loiter, center: [25.75, 33.9], radius_nm: 1.0, duration_min: 240, speed_kn: 1.5}
+      - {type: transit, waypoints: [[25.75, 33.9], [26.5, 34.4]], speed_kn: 9}
+  - mmsi: 636333102
+    imo: 9420107
+    name: "SILVER TIDE"
+    flag: LR
+    ship_type: bulk_carrier
+    length_m: 200
+    spoof_of: 636333102
+    behaviours:
+      - {type: transit, waypoints: [[23.2, 33.8], [24.5, 33.75], [25.2, 33.8]], speed_kn: 8}
+
+registry:
+  - mmsi: 511777105
+    imo: 9420105
+    name: "CORAL DAWN"
+    flag: PW
+    flag_history: [{flag: MT, until: "2024-06"}, {flag: PW, until: null}]
+    registered_owner: "Coral Dawn Maritime Ltd (Marshall Islands)"
+    operator: "Halcyon Marine Management FZE"
+    beneficial_owner: "Unknown (nominee directors)"
+    sanctions: [{list: "FICTIONAL-OFAC-SDN", entry: "Halcyon Marine Management FZE", since: "2025-11"}]
+    fleet: [{name: "CORAL DUSK", imo: 9420115}]
+    notes: "Same fictional operator as MERIDIAN STAR in the baseline scenario."
+  - mmsi: 422777106
+    imo: 9420106
+    name: "SAHAND 5"
+    flag: IR
+    flag_history: [{flag: IR, until: null}]
+    registered_owner: "Sahand Tankers Co"
+    operator: "Sahand Tankers Co"
+    beneficial_owner: "Reza Sahandi"
+    sanctions: [{list: "FICTIONAL-EU-RESTRICTIVE", entry: "Sahand Tankers Co", since: "2024-09"}]
+    fleet: []
+    notes: "Listed operator. Loiters inside an exclusion area."
+  - mmsi: 636333102
+    imo: 9420102
+    name: "SILVER TIDE"
+    flag: LR
+    flag_history: [{flag: LR, until: null}]
+    registered_owner: "Silver Tide Bulk Inc"
+    operator: "North Atlantic Bulk Management"
+    beneficial_owner: "North Atlantic Bulk Management"
+    sanctions: []
+    fleet: []
+    notes: "Legitimate operator. A second track broadcasting this MMSI is an identity spoof."

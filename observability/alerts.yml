@@ -1,0 +1,40 @@
+# SLO burn and cost alerts (phase 5). Locally these show in Prometheus/Grafana; on AWS the same
+# indicators feed CloudWatch alarms (infra/cdk/stacks/platform_stack.py).
+groups:
+  - name: argus-slo
+    rules:
+      - alert: SweepLatencyP95High
+        expr: argus_sweep_latency_p95_s > argus_target_sweep_latency_p95_s
+        for: 30m
+        labels: {severity: warning}
+        annotations: {summary: "Sweep p95 latency above target for 30 min"}
+      - alert: InvestigationCompletionLow
+        expr: argus_investigation_completion_ratio < argus_target_investigation_completion_ratio
+        for: 30m
+        labels: {severity: critical}
+        annotations: {summary: "Fewer than the target share of investigations complete (7-day window)"}
+      - alert: InvestigationLatencyP95High
+        expr: argus_investigation_latency_p95_s > argus_target_investigation_latency_p95_s
+        for: 30m
+        labels: {severity: warning}
+        annotations: {summary: "Investigation p95 latency above target"}
+      - alert: AlertToInvestigationLagHigh
+        expr: argus_alert_to_investigation_lag_p95_s > argus_target_alert_to_investigation_lag_p95_s
+        for: 15m
+        labels: {severity: warning}
+        annotations: {summary: "Severe alerts are waiting too long before an investigation opens"}
+      - alert: InvestigationCostHigh
+        expr: argus_investigation_cost_usd_avg > argus_target_investigation_cost_usd_avg
+        for: 1h
+        labels: {severity: warning}
+        annotations: {summary: "Average model cost per investigation above budget"}
+      - alert: EvalRecallBelowFloor
+        expr: argus_eval_recall_latest < argus_target_eval_recall_latest
+        for: 5m
+        labels: {severity: critical}
+        annotations: {summary: "Latest watch eval recall is below the floor; do not ship the current prompts/models"}
+      - alert: NoSweepsRecently
+        expr: sum(argus_jobs_24h{kind="sweep",status="succeeded"}) < 1
+        for: 2h
+        labels: {severity: warning}
+        annotations: {summary: "No successful sweep in the last 24 h"}

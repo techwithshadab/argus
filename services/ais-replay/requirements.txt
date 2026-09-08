@@ -1,0 +1,7 @@
+psycopg[binary]==3.3.5
+redis==8.1.0
+websockets==17.1
+pyyaml==6.0.3
+boto3==1.43.86
+opentelemetry-sdk==1.44.0
+opentelemetry-exporter-otlp-proto-http==1.44.0

@@ -1,0 +1,22 @@
+# Named watch areas for live AIS mode. The scenario's own box is always watched; WATCH_AREAS
+# names which of these are watched as well ("all", "scenario", or a comma-separated list).
+# Boxes are lon/lat in degrees. Bigger boxes mean more positions written and swept.
+areas:
+  - name: east_med
+    label: Eastern Mediterranean
+    bbox: {min_lon: 31.5, min_lat: 33.2, max_lon: 35.2, max_lat: 35.0}
+  - name: aegean
+    label: Aegean approaches
+    bbox: {min_lon: 23.0, min_lat: 33.6, max_lon: 26.6, max_lat: 35.4}
+  - name: black_sea
+    label: Black Sea
+    bbox: {min_lon: 27.5, min_lat: 40.9, max_lon: 41.8, max_lat: 47.3}
+  - name: persian_gulf
+    label: Persian Gulf and Hormuz
+    bbox: {min_lon: 47.5, min_lat: 23.5, max_lon: 57.5, max_lat: 30.5}
+  - name: gulf_of_guinea
+    label: Gulf of Guinea
+    bbox: {min_lon: -6.0, min_lat: -2.0, max_lon: 9.5, max_lat: 7.0}
+  - name: malacca
+    label: Strait of Malacca
+    bbox: {min_lon: 95.5, min_lat: 0.5, max_lon: 104.5, max_lat: 6.5}

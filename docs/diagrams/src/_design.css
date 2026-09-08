@@ -1,0 +1,76 @@
+/* Argus diagram design system: one palette + component set for every rendered figure.
+   Same component vocabulary as the Protometer figures; only the :root palette and the
+   gradients differ (chart ground, navy ink, sea-teal accents, red trust boundaries).
+   Render any src/*.html at 2x with render.sh; the PNGs land in docs/diagrams/. */
+:root{
+  --cream:#F1F4F5; --ink:#0B1F33; --purple:#0E7490; --peri:#8FC9D6; --sky:#7FB6C9;
+  --indigo:#0A2A4A; --red:#B3261E; --soft:rgba(11,31,51,.56); --soft2:rgba(11,31,51,.72);
+  --line:rgba(11,31,51,.18);
+  --font:"Geist",system-ui,sans-serif; --mono:"Geist Mono",Menlo,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--cream);font-family:var(--font);color:var(--ink);position:relative;overflow:hidden}
+.abs{position:absolute}
+.title{font-family:var(--mono);font-weight:600;letter-spacing:3.4px;color:var(--ink);text-transform:uppercase;text-align:center}
+.acol{background:#FAFBFB;border:1px solid var(--line);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;
+  box-shadow:0 8px 22px rgba(11,31,51,.08)}
+.acolhead{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;color:#fff;flex:none}
+.acolhead .ht{font-size:15.5px;font-weight:700}
+.acolhead .hn{font-family:var(--mono);font-size:26px;font-weight:600;opacity:.38}
+.g-ink{background:linear-gradient(120deg,#0B1F33,#2B4A6B)}
+.g-purple{background:linear-gradient(120deg,#0B5F73,#0E7490)}
+.g-indigo{background:linear-gradient(120deg,#0A2A4A,#1F5A86)}
+.g-slate{background:linear-gradient(120deg,#1B3A52,#2A7A96)}
+.abody{padding:13px;display:flex;flex-direction:column;justify-content:space-between;flex:1;gap:10px}
+.aitem{display:flex;gap:10px;align-items:flex-start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.aic{width:36px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex:none;color:#fff}
+.aic svg{width:19px;height:19px;stroke:#fff;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.aitem .at{font-size:13px;font-weight:600;color:var(--ink);line-height:1.2}
+.aitem .ac{font-size:10.5px;color:var(--soft);margin-top:2px;line-height:1.35}
+.ic1{background:linear-gradient(135deg,#0E7490,#4FA3B8)}
+.ic2{background:linear-gradient(135deg,#2B7FB8,#7FB6C9)}
+.ic3{background:linear-gradient(135deg,#0A2A4A,#0E7490)}
+.ic4{background:linear-gradient(135deg,#3E8EA0,#8FC9D6)}
+.ic5{background:linear-gradient(135deg,#1F5A86,#7FB6C9)}
+.afeat{background:linear-gradient(120deg,#0B1F33,#0F5C74);border-radius:11px;padding:12px 14px;color:#fff}
+.afeat .fk{font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:1.6px;color:var(--peri);text-transform:uppercase}
+.afeat .ft{font-size:15px;font-weight:700;margin-top:3px}
+.afeat .fc{font-size:10.8px;color:rgba(241,244,245,.75);margin-top:4px;line-height:1.4}
+.acard{background:#fff;border:1px solid var(--line);border-radius:10px;padding:9px 11px}
+.acard .cb{height:3px;width:26px;border-radius:2px;margin-bottom:6px}
+.acard .at{font-size:12.5px;font-weight:600;color:var(--ink);line-height:1.2}
+.acard .ac{font-size:10.5px;color:var(--soft);margin-top:3px;line-height:1.3}
+.acheck{display:flex;align-items:center;gap:10px;background:#EEF5F0;border:1px solid #CFE3D6;border-radius:10px;padding:9px 12px}
+.acheck .ck{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,#2E7D5B,#5BAF88);
+  color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;flex:none}
+.acheck .at{font-size:12px;font-weight:600;color:var(--ink)}
+.acheck .ac{font-size:10.3px;color:var(--soft);line-height:1.3}
+.stepwrap{background:linear-gradient(120deg,#12283D,#0F5C74);border-radius:11px;padding:11px 12px}
+.stepwrap .sk{font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:1.5px;color:var(--peri);text-transform:uppercase}
+.steps{display:flex;gap:5px;margin-top:9px;align-items:stretch}
+.step{flex:1;background:rgba(241,244,245,.07);border:1px solid rgba(143,201,214,.35);border-radius:8px;padding:8px 8px}
+.step .sn{font-family:var(--mono);font-size:9.5px;color:var(--peri)}
+.step .st{font-size:11.5px;font-weight:600;color:#fff;margin-top:2px;line-height:1.15}
+.step .sc{font-size:9.5px;color:rgba(241,244,245,.62);margin-top:2px;line-height:1.25}
+.schev{display:flex;align-items:center;color:var(--peri);font-size:13px}
+.estrip{background:#fff;border:1px solid var(--line);border-radius:10px;padding:9px 12px}
+.estrip .ek{font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:1.3px;color:#1F5A86;text-transform:uppercase}
+.echips{display:flex;gap:6px;margin-top:7px;flex-wrap:wrap}
+.echip{background:var(--cream);border:1px solid var(--line);border-radius:16px;padding:4px 10px;font-size:10.5px;font-weight:600;color:var(--ink);white-space:nowrap}
+.ctrlplane{background:linear-gradient(120deg,#0A1624,#16324A);border-radius:14px;display:flex;align-items:stretch;color:#fff;overflow:hidden}
+.ctrlplane .cpl{flex:none;display:flex;align-items:center;padding:0 20px;font-family:var(--mono);font-size:11px;
+  font-weight:600;letter-spacing:1.4px;border-right:1px solid rgba(241,244,245,.14);text-transform:uppercase;line-height:1.5}
+.ctrlplane .cpi{flex:1;display:flex;align-items:center;justify-content:center;gap:8px;font-size:11.5px;font-weight:500;
+  color:rgba(241,244,245,.85);border-right:1px solid rgba(241,244,245,.14);padding:11px 10px;text-align:center;line-height:1.3}
+.ctrlplane .cpi:last-child{border-right:none}
+.ctrlplane .cpi svg{width:15px;height:15px;stroke:var(--peri);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.bline{position:absolute;border-left:2px dashed var(--red);opacity:.7}
+.vpill{position:absolute;background:#fff;border:1.5px dashed var(--red);border-radius:20px;padding:12px 7px;
+  font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:1.6px;color:var(--red);
+  writing-mode:vertical-rl;transform:rotate(180deg);text-transform:uppercase}
+.tag{display:inline-block;font-family:var(--mono);font-size:8.5px;font-weight:600;background:rgba(14,116,144,.12);color:var(--purple);border-radius:8px;padding:2px 7px;letter-spacing:.4px}
+.szone{border:1.5px dashed rgba(11,31,51,.45);border-radius:14px;background:rgba(11,31,51,.025);
+  display:flex;flex-direction:column;justify-content:space-between;padding:13px;gap:10px}
+.szone .zlab{font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:var(--soft2)}
+.flowarr{position:absolute}
+.colnote{font-size:9.5px;color:var(--soft);line-height:1.35}

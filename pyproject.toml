@@ -1,0 +1,22 @@
+[project]
+name = "argus"
+version = "0.1.0"
+description = "Argus: maritime domain awareness dark vessel investigation demo (Strands + LangGraph agents on Bedrock AgentCore, MCP, A2A, OpenTelemetry)"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+exclude = ["infra/cdk/cdk.out", ".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501", "B008", "B904"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = ["integration: needs the running docker compose stack; skipped in CI"]

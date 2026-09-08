@@ -1,0 +1,17 @@
+# Regression floors (phase 5). A missed floor fails `node_evals.py --gate`. Unmeasured scores
+# (e.g. the LLM judge without credentials) are reported but never fail the gate.
+watch:
+  recall: 0.8
+  precision: 0.6
+investigator:
+  schema_valid: 1.0
+  evidence_traceability: 0.9
+  expected_hits: 0.7
+tasking:
+  schema_valid: 1.0
+  decision_match: 0.5
+report:
+  completion: 1.0
+  policy_clean: 1.0
+  rubric_avg: 3.5
+  expected_hits: 0.6

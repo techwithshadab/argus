@@ -1,0 +1,3121 @@
+{
+ "uid": "argus",
+ "title": "Argus",
+ "tags": [
+  "argus",
+  "consolidated"
+ ],
+ "timezone": "utc",
+ "schemaVersion": 39,
+ "version": 1,
+ "editable": true,
+ "graphTooltip": 1,
+ "refresh": "30s",
+ "time": {
+  "from": "now-6h",
+  "to": "now"
+ },
+ "templating": {
+  "list": [
+   {
+    "name": "investigation",
+    "type": "textbox",
+    "label": "Investigation id",
+    "query": "",
+    "current": {
+     "text": "",
+     "value": ""
+    },
+    "hide": 0
+   },
+   {
+    "name": "mmsi",
+    "type": "textbox",
+    "label": "MMSI",
+    "query": "",
+    "current": {
+     "text": "",
+     "value": ""
+    },
+    "hide": 0
+   },
+   {
+    "name": "region",
+    "type": "textbox",
+    "label": "AWS region",
+    "query": "us-east-1",
+    "current": {
+     "text": "us-east-1",
+     "value": "us-east-1"
+    },
+    "hide": 0
+   }
+  ]
+ },
+ "links": [
+  {
+   "title": "Watch floor (UI)",
+   "type": "link",
+   "url": "/",
+   "icon": "external link"
+  },
+  {
+   "title": "AgentCore sessions (CloudWatch)",
+   "type": "link",
+   "url": "https://${region}.console.aws.amazon.com/cloudwatch/home?region=${region}#gen-ai-observability/agent-core",
+   "icon": "external link",
+   "targetBlank": true
+  }
+ ],
+ "annotations": {
+  "list": [
+   {
+    "name": "Deploys",
+    "datasource": {
+     "type": "loki",
+     "uid": "loki"
+    },
+    "enable": true,
+    "iconColor": "#0E7490",
+    "expr": "{service_name=\"api\"} |= \"Uvicorn running\"",
+    "titleFormat": "API (re)started"
+   }
+  ]
+ },
+ "panels": [
+  {
+   "id": 23,
+   "type": "stat",
+   "title": "Feed",
+   "description": "Seconds since the newest position; red means the picture is stale.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 3,
+    "h": 4
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "argus_feed_lag_s",
+     "legendFormat": "__auto",
+     "instant": true,
+     "range": false
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s",
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 300
+       },
+       {
+        "color": "red",
+        "value": 900
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "background",
+    "graphMode": "area",
+    "textMode": "value"
+   }
+  },
+  {
+   "id": 24,
+   "type": "stat",
+   "title": "Vessels reporting",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 3,
+    "y": 0,
+    "w": 3,
+    "h": 4
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "argus_vessels_reporting_10m",
+     "legendFormat": "__auto",
+     "instant": true,
+     "range": false
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 0
+       },
+       {
+        "color": "green",
+        "value": 1
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "background",
+    "graphMode": "area",
+    "textMode": "value"
+   }
+  },
+  {
+   "id": 25,
+   "type": "stat",
+   "title": "Needs a decision",
+   "description": "Draft alerts plus proposed tasking requests.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 6,
+    "y": 0,
+    "w": 3,
+    "h": 4
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "argus_alerts_awaiting_review + argus_tasking_proposed",
+     "legendFormat": "__auto",
+     "instant": true,
+     "range": false
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 5
+       },
+       {
+        "color": "red",
+        "value": 15
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "background",
+    "graphMode": "area",
+    "textMode": "value"
+   }
+  },
+  {
+   "id": 26,
+   "type": "stat",
+   "title": "Oldest unreviewed",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 9,
+    "y": 0,
+    "w": 3,
+    "h": 4
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "argus_oldest_unreviewed_alert_s / 60",
+     "legendFormat": "__auto",
+     "instant": true,
+     "range": false
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "m",
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 60
+       },
+       {
+        "color": "red",
+        "value": 240
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "background",
+    "graphMode": "area",
+    "textMode": "value"
+   }
+  },
+  {
+   "id": 27,
+   "type": "stat",
+   "title": "Cases in progress",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 0,
+    "w": 3,
+    "h": 4
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "argus_investigations_by_status{status=\"running\"}",
+     "legendFormat": "__auto",
+     "instant": true,
+     "range": false
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "background",
+    "graphMode": "area",
+    "textMode": "value"
+   }
+  },
+  {
+   "id": 28,
+   "type": "stat",
+   "title": "Tasking awaiting approval",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 15,
+    "y": 0,
+    "w": 3,
+    "h": 4
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "argus_tasking_proposed",
+     "legendFormat": "__auto",
+     "instant": true,
+     "range": false
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 1
+       },
+       {
+        "color": "red",
+        "value": 5
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "background",
+    "graphMode": "area",
+    "textMode": "value"
+   }
+  },
+  {
+   "id": 29,
+   "type": "stat",
+   "title": "Cost today",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 18,
+    "y": 0,
+    "w": 3,
+    "h": 4
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "argus_investigation_cost_usd_today",
+     "legendFormat": "__auto",
+     "instant": true,
+     "range": false
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD",
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 5
+       },
+       {
+        "color": "red",
+        "value": 10
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "background",
+    "graphMode": "area",
+    "textMode": "value"
+   }
+  },
+  {
+   "id": 30,
+   "type": "stat",
+   "title": "Latest eval recall",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 21,
+    "y": 0,
+    "w": 3,
+    "h": 4
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "argus_eval_recall_latest",
+     "legendFormat": "__auto",
+     "instant": true,
+     "range": false
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percentunit",
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 0.8
+       },
+       {
+        "color": "green",
+        "value": 0.9
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "background",
+    "graphMode": "area",
+    "textMode": "value"
+   }
+  },
+  {
+   "id": 31,
+   "type": "row",
+   "title": "Watch floor: what needs a decision now",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 4,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 32,
+   "type": "bargauge",
+   "title": "Open alerts by severity",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 5,
+    "w": 8,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "argus_alerts_open_by_severity",
+     "legendFormat": "{{severity}}",
+     "instant": true,
+     "range": false
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 5
+       },
+       {
+        "color": "red",
+        "value": 15
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "orientation": "horizontal",
+    "displayMode": "gradient",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   }
+  },
+  {
+   "id": 33,
+   "type": "timeseries",
+   "title": "Backlog over time",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 8,
+    "y": 5,
+    "w": 8,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "argus_alerts_awaiting_review",
+     "legendFormat": "alerts awaiting review",
+     "range": true,
+     "instant": false
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "argus_tasking_proposed",
+     "legendFormat": "tasking proposed",
+     "range": true,
+     "instant": false
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   }
+  },
+  {
+   "id": 34,
+   "type": "logs",
+   "title": "What the Watch agent raised (latest first)",
+   "description": "",
+   "datasource": {
+    "type": "loki",
+    "uid": "loki"
+   },
+   "gridPos": {
+    "x": 16,
+    "y": 5,
+    "w": 8,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "loki",
+      "uid": "loki"
+     },
+     "expr": "{service_name=\"agent-watch\"} |= \"raise_alert\"",
+     "legendFormat": "",
+     "queryType": "range"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {
+    "showTime": true,
+    "wrapLogMessage": true,
+    "sortOrder": "Descending"
+   }
+  },
+  {
+   "id": 35,
+   "type": "row",
+   "title": "Pipeline health and service levels",
+   "collapsed": true,
+   "gridPos": {
+    "x": 0,
+    "y": 13,
+    "w": 24,
+    "h": 1
+   },
+   "panels": [
+    {
+     "id": 36,
+     "type": "timeseries",
+     "title": "Sweep latency p95",
+     "description": "",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "gridPos": {
+      "x": 0,
+      "y": 14,
+      "w": 8,
+      "h": 7
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+       },
+       "expr": "argus_sweep_latency_p95_s",
+       "legendFormat": "p95",
+       "range": true,
+       "instant": false
+      },
+      {
+       "refId": "B",
+       "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+       },
+       "expr": "argus_target_sweep_latency_p95_s",
+       "legendFormat": "target",
+       "range": true,
+       "instant": false
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {
+       "unit": "s",
+       "thresholds": {
+        "mode": "absolute",
+        "steps": [
+         {
+          "color": "green",
+          "value": null
+         },
+         {
+          "color": "orange",
+          "value": 200
+         },
+         {
+          "color": "red",
+          "value": 300
+         }
+        ]
+       },
+       "custom": {
+        "thresholdsStyle": {
+         "mode": "dashed+area"
+        }
+       }
+      },
+      "overrides": []
+     },
+     "options": {
+      "legend": {
+       "displayMode": "list",
+       "placement": "bottom"
+      },
+      "tooltip": {
+       "mode": "multi"
+      }
+     }
+    },
+    {
+     "id": 37,
+     "type": "timeseries",
+     "title": "Investigation latency p95",
+     "description": "",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "gridPos": {
+      "x": 8,
+      "y": 14,
+      "w": 8,
+      "h": 7
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+       },
+       "expr": "argus_investigation_latency_p95_s",
+       "legendFormat": "p95",
+       "range": true,
+       "instant": false
+      },
+      {
+       "refId": "B",
+       "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+       },
+       "expr": "argus_target_investigation_latency_p95_s",
+       "legendFormat": "target",
+       "range": true,
+       "instant": false
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {
+       "unit": "s",
+       "thresholds": {
+        "mode": "absolute",
+        "steps": [
+         {
+          "color": "green",
+          "value": null
+         },
+         {
+          "color": "orange",
+          "value": 400
+         },
+         {
+          "color": "red",
+          "value": 600
+         }
+        ]
+       },
+       "custom": {
+        "thresholdsStyle": {
+         "mode": "dashed+area"
+        }
+       }
+      },
+      "overrides": []
+     },
+     "options": {
+      "legend": {
+       "displayMode": "list",
+       "placement": "bottom"
+      },
+      "tooltip": {
+       "mode": "multi"
+      }
+     }
+    },
+    {
+     "id": 38,
+     "type": "timeseries",
+     "title": "Alert to investigation lag p95",
+     "description": "",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "gridPos": {
+      "x": 16,
+      "y": 14,
+      "w": 8,
+      "h": 7
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+       },
+       "expr": "argus_alert_to_investigation_lag_p95_s",
+       "legendFormat": "p95",
+       "range": true,
+       "instant": false
+      },
+      {
+       "refId": "B",
+       "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+       },
+       "expr": "argus_target_alert_to_investigation_lag_p95_s",
+       "legendFormat": "target",
+       "range": true,
+       "instant": false
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {
+       "unit": "s",
+       "thresholds": {
+        "mode": "absolute",
+        "steps": [
+         {
+          "color": "green",
+          "value": null
+         },
+         {
+          "color": "orange",
+          "value": 60
+         },
+         {
+          "color": "red",
+          "value": 120
+         }
+        ]
+       },
+       "custom": {
+        "thresholdsStyle": {
+         "mode": "dashed+area"
+        }
+       }
+      },
+      "overrides": []
+     },
+     "options": {
+      "legend": {
+       "displayMode": "list",
+       "placement": "bottom"
+      },
+      "tooltip": {
+       "mode": "multi"
+      }
+     }
+    },
+    {
+     "id": 39,
+     "type": "gauge",
+     "title": "Investigation completion",
+     "description": "Share of investigations that completed in the window; target 90%.",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "gridPos": {
+      "x": 0,
+      "y": 21,
+      "w": 6,
+      "h": 6
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+       },
+       "expr": "argus_investigation_completion_ratio",
+       "legendFormat": "__auto",
+       "instant": true,
+       "range": false
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {
+       "unit": "percentunit",
+       "thresholds": {
+        "mode": "absolute",
+        "steps": [
+         {
+          "color": "red",
+          "value": null
+         },
+         {
+          "color": "orange",
+          "value": 0.9
+         },
+         {
+          "color": "green",
+          "value": 0.95
+         }
+        ]
+       }
+      },
+      "overrides": []
+     },
+     "options": {}
+    },
+    {
+     "id": 40,
+     "type": "gauge",
+     "title": "Error budget burn",
+     "description": "1.0 means the whole failure budget for the window is spent.",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "gridPos": {
+      "x": 6,
+      "y": 21,
+      "w": 6,
+      "h": 6
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+       },
+       "expr": "(1 - argus_investigation_completion_ratio) / (1 - argus_target_investigation_completion_ratio)",
+       "legendFormat": "__auto",
+       "instant": true,
+       "range": false
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {
+       "thresholds": {
+        "mode": "absolute",
+        "steps": [
+         {
+          "color": "green",
+          "value": null
+         },
+         {
+          "color": "orange",
+          "value": 0.8
+         },
+         {
+          "color": "red",
+          "value": 1.0
+         }
+        ]
+       }
+      },
+      "overrides": []
+     },
+     "options": {}
+    },
+    {
+     "id": 41,
+     "type": "timeseries",
+     "title": "Jobs in the last 24 h",
+     "description": "",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "gridPos": {
+      "x": 12,
+      "y": 21,
+      "w": 12,
+      "h": 6
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+       },
+       "expr": "sum by (kind, status) (argus_jobs_24h)",
+       "legendFormat": "{{kind}} {{status}}",
+       "range": true,
+       "instant": false
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {
+       "custom": {
+        "drawStyle": "bars",
+        "fillOpacity": 60,
+        "stacking": {
+         "mode": "normal"
+        }
+       }
+      },
+      "overrides": []
+     },
+     "options": {
+      "legend": {
+       "displayMode": "list",
+       "placement": "bottom"
+      },
+      "tooltip": {
+       "mode": "multi"
+      }
+     }
+    },
+    {
+     "id": 42,
+     "type": "timeseries",
+     "title": "Job queue depth and dead letters",
+     "description": "",
+     "datasource": {
+      "type": "cloudwatch",
+      "uid": "cloudwatch"
+     },
+     "gridPos": {
+      "x": 0,
+      "y": 27,
+      "w": 12,
+      "h": 7
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "cloudwatch",
+        "uid": "cloudwatch"
+       },
+       "queryMode": "Metrics",
+       "namespace": "AWS/SQS",
+       "metricName": "ApproximateNumberOfMessagesVisible",
+       "dimensions": {
+        "QueueName": [
+         "*"
+        ]
+       },
+       "statistic": "Maximum",
+       "period": "60",
+       "region": "default",
+       "label": "${PROP('Dim.QueueName')}",
+       "metricQueryType": 0,
+       "metricEditorMode": 0,
+       "matchExact": false
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {
+       "thresholds": {
+        "mode": "absolute",
+        "steps": [
+         {
+          "color": "green",
+          "value": null
+         },
+         {
+          "color": "orange",
+          "value": 5
+         },
+         {
+          "color": "red",
+          "value": 20
+         }
+        ]
+       },
+       "custom": {
+        "thresholdsStyle": {
+         "mode": "dashed+area"
+        }
+       }
+      },
+      "overrides": []
+     },
+     "options": {
+      "legend": {
+       "displayMode": "list",
+       "placement": "bottom"
+      },
+      "tooltip": {
+       "mode": "multi"
+      }
+     }
+    },
+    {
+     "id": 43,
+     "type": "timeseries",
+     "title": "Errors in agent logs (5 m)",
+     "description": "",
+     "datasource": {
+      "type": "loki",
+      "uid": "loki"
+     },
+     "gridPos": {
+      "x": 12,
+      "y": 27,
+      "w": 12,
+      "h": 7
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "loki",
+        "uid": "loki"
+       },
+       "expr": "sum by (service_name) (count_over_time({service_name=~\"agent-.*\"} |~ \"ERROR|Traceback\" [5m]))",
+       "legendFormat": "{{service_name}}",
+       "queryType": "range"
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "options": {
+      "legend": {
+       "displayMode": "list",
+       "placement": "bottom"
+      },
+      "tooltip": {
+       "mode": "multi"
+      }
+     }
+    },
+    {
+     "id": 44,
+     "type": "alertlist",
+     "title": "Firing alerts",
+     "description": "",
+     "datasource": null,
+     "gridPos": {
+      "x": 0,
+      "y": 34,
+      "w": 24,
+      "h": 6
+     },
+     "targets": [],
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "options": {
+      "alertName": "",
+      "dashboardAlerts": false,
+      "groupBy": [],
+      "groupMode": "default",
+      "maxItems": 20,
+      "sortOrder": 1,
+      "stateFilter": {
+       "firing": true,
+       "pending": true,
+       "noData": false,
+       "normal": false,
+       "error": true
+      },
+      "viewMode": "list"
+     }
+    }
+   ]
+  },
+  {
+   "id": 45,
+   "type": "row",
+   "title": "Agents and tools",
+   "collapsed": true,
+   "gridPos": {
+    "x": 0,
+    "y": 14,
+    "w": 24,
+    "h": 1
+   },
+   "panels": [
+    {
+     "id": 46,
+     "type": "timeseries",
+     "title": "MCP tool calls by tool",
+     "description": "",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "gridPos": {
+      "x": 0,
+      "y": 15,
+      "w": 8,
+      "h": 7
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+       },
+       "expr": "sum by (mcp_tool_name) (rate(traces_spanmetrics_calls_total{mcp_tool_name!=\"\"}[5m]))",
+       "legendFormat": "{{mcp_tool_name}}",
+       "range": true,
+       "instant": false
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {
+       "unit": "reqps"
+      },
+      "overrides": []
+     },
+     "options": {
+      "legend": {
+       "displayMode": "list",
+       "placement": "bottom"
+      },
+      "tooltip": {
+       "mode": "multi"
+      }
+     }
+    },
+    {
+     "id": 47,
+     "type": "timeseries",
+     "title": "Tool p95 latency",
+     "description": "",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "gridPos": {
+      "x": 8,
+      "y": 15,
+      "w": 8,
+      "h": 7
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+       },
+       "expr": "histogram_quantile(0.95, sum by (le, mcp_tool_name) (rate(traces_spanmetrics_latency_bucket{mcp_tool_name!=\"\"}[5m])))",
+       "legendFormat": "{{mcp_tool_name}}",
+       "range": true,
+       "instant": false
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {
+       "unit": "ms"
+      },
+      "overrides": []
+     },
+     "options": {
+      "legend": {
+       "displayMode": "list",
+       "placement": "bottom"
+      },
+      "tooltip": {
+       "mode": "multi"
+      }
+     }
+    },
+    {
+     "id": 48,
+     "type": "timeseries",
+     "title": "Model calls by model",
+     "description": "",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "gridPos": {
+      "x": 16,
+      "y": 15,
+      "w": 8,
+      "h": 7
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+       },
+       "expr": "sum by (gen_ai_request_model) (rate(traces_spanmetrics_calls_total{gen_ai_request_model!=\"\"}[5m]))",
+       "legendFormat": "{{gen_ai_request_model}}",
+       "range": true,
+       "instant": false
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {
+       "unit": "reqps"
+      },
+      "overrides": []
+     },
+     "options": {
+      "legend": {
+       "displayMode": "list",
+       "placement": "bottom"
+      },
+      "tooltip": {
+       "mode": "multi"
+      }
+     }
+    },
+    {
+     "id": 49,
+     "type": "timeseries",
+     "title": "Span rate by service",
+     "description": "",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "gridPos": {
+      "x": 0,
+      "y": 22,
+      "w": 12,
+      "h": 7
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+       },
+       "expr": "sum by (service_name) (rate(traces_spanmetrics_calls_total[5m]))",
+       "legendFormat": "{{service_name}}",
+       "range": true,
+       "instant": false
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {
+       "unit": "reqps"
+      },
+      "overrides": []
+     },
+     "options": {
+      "legend": {
+       "displayMode": "list",
+       "placement": "bottom"
+      },
+      "tooltip": {
+       "mode": "multi"
+      }
+     }
+    },
+    {
+     "id": 50,
+     "type": "timeseries",
+     "title": "p95 latency by service",
+     "description": "",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "gridPos": {
+      "x": 12,
+      "y": 22,
+      "w": 12,
+      "h": 7
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+       },
+       "expr": "histogram_quantile(0.95, sum by (le, service_name) (rate(traces_spanmetrics_latency_bucket[5m])))",
+       "legendFormat": "{{service_name}}",
+       "range": true,
+       "instant": false
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {
+       "unit": "ms"
+      },
+      "overrides": []
+     },
+     "options": {
+      "legend": {
+       "displayMode": "list",
+       "placement": "bottom"
+      },
+      "tooltip": {
+       "mode": "multi"
+      }
+     }
+    },
+    {
+     "id": 51,
+     "type": "nodeGraph",
+     "title": "Service graph",
+     "description": "",
+     "datasource": {
+      "type": "tempo",
+      "uid": "tempo"
+     },
+     "gridPos": {
+      "x": 0,
+      "y": 29,
+      "w": 24,
+      "h": 9
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+       },
+       "queryType": "serviceMap"
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "options": {}
+    }
+   ]
+  },
+  {
+   "id": 52,
+   "type": "row",
+   "title": "One investigation (pick an investigation id and MMSI above)",
+   "collapsed": true,
+   "gridPos": {
+    "x": 0,
+    "y": 15,
+    "w": 24,
+    "h": 1
+   },
+   "panels": [
+    {
+     "id": 53,
+     "type": "text",
+     "title": "How to read this board",
+     "description": "",
+     "datasource": null,
+     "gridPos": {
+      "x": 0,
+      "y": 16,
+      "w": 24,
+      "h": 4
+     },
+     "targets": [],
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "options": {
+      "mode": "markdown",
+      "content": "Paste an **investigation id** (from the watch floor's report panel) to see its trace, its node timeline and what it cost. The **CloudWatch GenAI Observability session** link opens the same investigation's prompts, completions and the officer's verdict. Traces come from Tempo, logs from Loki, tokens from the provenance manifest."
+     }
+    },
+    {
+     "id": 54,
+     "type": "traces",
+     "title": "Traces for $investigation",
+     "description": "",
+     "datasource": {
+      "type": "tempo",
+      "uid": "tempo"
+     },
+     "gridPos": {
+      "x": 0,
+      "y": 20,
+      "w": 12,
+      "h": 9
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+       },
+       "query": "{ span.session.id = \"$investigation\" || resource.service.name = \"agent-orchestrator\" && span.session.id = \"$investigation\" }",
+       "queryType": "traceql",
+       "limit": 20,
+       "tableType": "traces"
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "options": {},
+     "links": [
+      {
+       "title": "Open in CloudWatch GenAI Observability",
+       "url": "https://${region}.console.aws.amazon.com/cloudwatch/home?region=${region}#gen-ai-observability/agent-core",
+       "targetBlank": true
+      }
+     ]
+    },
+    {
+     "id": 55,
+     "type": "logs",
+     "title": "Node timeline (orchestrator and specialists)",
+     "description": "",
+     "datasource": {
+      "type": "loki",
+      "uid": "loki"
+     },
+     "gridPos": {
+      "x": 12,
+      "y": 20,
+      "w": 12,
+      "h": 9
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "loki",
+        "uid": "loki"
+       },
+       "expr": "{service_name=~\"agent-.*\"} |= \"$investigation\"",
+       "legendFormat": "",
+       "queryType": "range"
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "options": {
+      "showTime": true,
+      "wrapLogMessage": true,
+      "sortOrder": "Ascending",
+      "dedupStrategy": "none"
+     }
+    },
+    {
+     "id": 56,
+     "type": "logs",
+     "title": "Everything the tools and agents logged for MMSI $mmsi",
+     "description": "",
+     "datasource": {
+      "type": "loki",
+      "uid": "loki"
+     },
+     "gridPos": {
+      "x": 0,
+      "y": 29,
+      "w": 24,
+      "h": 10
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "loki",
+        "uid": "loki"
+       },
+       "expr": "{service_name=~\"agent-.*|mcp-.*\"} |= \"$mmsi\"",
+       "legendFormat": "",
+       "queryType": "range"
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "options": {
+      "showTime": true,
+      "wrapLogMessage": true,
+      "sortOrder": "Descending"
+     }
+    }
+   ]
+  },
+  {
+   "id": 57,
+   "type": "row",
+   "title": "Models, cost and quality",
+   "collapsed": true,
+   "gridPos": {
+    "x": 0,
+    "y": 16,
+    "w": 24,
+    "h": 1
+   },
+   "panels": [
+    {
+     "id": 58,
+     "type": "bargauge",
+     "title": "Tokens by node and model (24 h)",
+     "description": "",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "gridPos": {
+      "x": 0,
+      "y": 17,
+      "w": 12,
+      "h": 8
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+       },
+       "expr": "sum by (node, model, kind) (argus_node_tokens_24h)",
+       "legendFormat": "{{node}} \u00b7 {{model}} \u00b7 {{kind}}",
+       "instant": true,
+       "range": false
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {
+       "unit": "short"
+      },
+      "overrides": []
+     },
+     "options": {
+      "orientation": "horizontal",
+      "displayMode": "gradient",
+      "reduceOptions": {
+       "calcs": [
+        "lastNotNull"
+       ]
+      }
+     }
+    },
+    {
+     "id": 59,
+     "type": "timeseries",
+     "title": "Cost per investigation",
+     "description": "",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "gridPos": {
+      "x": 12,
+      "y": 17,
+      "w": 12,
+      "h": 8
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+       },
+       "expr": "argus_investigation_cost_usd_avg",
+       "legendFormat": "30-day average",
+       "range": true,
+       "instant": false
+      },
+      {
+       "refId": "B",
+       "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+       },
+       "expr": "argus_target_investigation_cost_usd_avg",
+       "legendFormat": "budget",
+       "range": true,
+       "instant": false
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {
+       "unit": "currencyUSD",
+       "thresholds": {
+        "mode": "absolute",
+        "steps": [
+         {
+          "color": "green",
+          "value": null
+         },
+         {
+          "color": "orange",
+          "value": 1.0
+         },
+         {
+          "color": "red",
+          "value": 2.0
+         }
+        ]
+       },
+       "custom": {
+        "thresholdsStyle": {
+         "mode": "dashed+area"
+        }
+       }
+      },
+      "overrides": []
+     },
+     "options": {
+      "legend": {
+       "displayMode": "list",
+       "placement": "bottom"
+      },
+      "tooltip": {
+       "mode": "multi"
+      }
+     }
+    },
+    {
+     "id": 60,
+     "type": "stat",
+     "title": "Rejections (24 h)",
+     "description": "Policy or schema rejections: a prompt regression shows here first.",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "gridPos": {
+      "x": 0,
+      "y": 25,
+      "w": 4,
+      "h": 4
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+       },
+       "expr": "argus_node_rejections_24h",
+       "legendFormat": "__auto",
+       "instant": true,
+       "range": false
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {
+       "thresholds": {
+        "mode": "absolute",
+        "steps": [
+         {
+          "color": "green",
+          "value": null
+         },
+         {
+          "color": "orange",
+          "value": 3
+         },
+         {
+          "color": "red",
+          "value": 10
+         }
+        ]
+       }
+      },
+      "overrides": []
+     },
+     "options": {
+      "reduceOptions": {
+       "calcs": [
+        "lastNotNull"
+       ],
+       "fields": "",
+       "values": false
+      },
+      "colorMode": "background",
+      "graphMode": "area",
+      "textMode": "value"
+     }
+    },
+    {
+     "id": 61,
+     "type": "stat",
+     "title": "Escalations (24 h)",
+     "description": "Nodes that needed the stronger tier.",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "gridPos": {
+      "x": 4,
+      "y": 25,
+      "w": 4,
+      "h": 4
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+       },
+       "expr": "argus_node_escalations_24h",
+       "legendFormat": "__auto",
+       "instant": true,
+       "range": false
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {
+       "thresholds": {
+        "mode": "absolute",
+        "steps": [
+         {
+          "color": "green",
+          "value": null
+         },
+         {
+          "color": "orange",
+          "value": 5
+         },
+         {
+          "color": "red",
+          "value": 15
+         }
+        ]
+       }
+      },
+      "overrides": []
+     },
+     "options": {
+      "reduceOptions": {
+       "calcs": [
+        "lastNotNull"
+       ],
+       "fields": "",
+       "values": false
+      },
+      "colorMode": "background",
+      "graphMode": "area",
+      "textMode": "value"
+     }
+    },
+    {
+     "id": 62,
+     "type": "stat",
+     "title": "Nodes run (24 h)",
+     "description": "",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "gridPos": {
+      "x": 8,
+      "y": 25,
+      "w": 4,
+      "h": 4
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+       },
+       "expr": "argus_nodes_run_24h",
+       "legendFormat": "__auto",
+       "instant": true,
+       "range": false
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "options": {
+      "reduceOptions": {
+       "calcs": [
+        "lastNotNull"
+       ],
+       "fields": "",
+       "values": false
+      },
+      "colorMode": "background",
+      "graphMode": "area",
+      "textMode": "value"
+     }
+    },
+    {
+     "id": 63,
+     "type": "stat",
+     "title": "Suites passing",
+     "description": "Passing suites out of suites with a run.",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "gridPos": {
+      "x": 12,
+      "y": 25,
+      "w": 4,
+      "h": 4
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+       },
+       "expr": "sum(argus_eval_passed)",
+       "legendFormat": "__auto",
+       "instant": true,
+       "range": false
+      },
+      {
+       "refId": "B",
+       "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+       },
+       "expr": "count(argus_eval_passed)",
+       "legendFormat": "__auto",
+       "instant": true,
+       "range": false
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "options": {
+      "reduceOptions": {
+       "calcs": [
+        "lastNotNull"
+       ],
+       "fields": "",
+       "values": false
+      },
+      "colorMode": "background",
+      "graphMode": "area",
+      "textMode": "value"
+     }
+    },
+    {
+     "id": 64,
+     "type": "stat",
+     "title": "Latest eval recall",
+     "description": "",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "gridPos": {
+      "x": 16,
+      "y": 25,
+      "w": 4,
+      "h": 4
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+       },
+       "expr": "argus_eval_recall_latest",
+       "legendFormat": "__auto",
+       "instant": true,
+       "range": false
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {
+       "unit": "percentunit",
+       "thresholds": {
+        "mode": "absolute",
+        "steps": [
+         {
+          "color": "red",
+          "value": null
+         },
+         {
+          "color": "orange",
+          "value": 0.8
+         },
+         {
+          "color": "green",
+          "value": 0.9
+         }
+        ]
+       }
+      },
+      "overrides": []
+     },
+     "options": {
+      "reduceOptions": {
+       "calcs": [
+        "lastNotNull"
+       ],
+       "fields": "",
+       "values": false
+      },
+      "colorMode": "background",
+      "graphMode": "area",
+      "textMode": "value"
+     }
+    },
+    {
+     "id": 65,
+     "type": "timeseries",
+     "title": "Eval scores by suite and metric",
+     "description": "",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "gridPos": {
+      "x": 0,
+      "y": 29,
+      "w": 20,
+      "h": 8
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+       },
+       "expr": "argus_eval_score",
+       "legendFormat": "{{suite}} {{metric}}",
+       "range": true,
+       "instant": false
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {
+       "unit": "percentunit",
+       "thresholds": {
+        "mode": "absolute",
+        "steps": [
+         {
+          "color": "red",
+          "value": null
+         },
+         {
+          "color": "orange",
+          "value": 0.8
+         },
+         {
+          "color": "green",
+          "value": 0.9
+         }
+        ]
+       },
+       "custom": {
+        "thresholdsStyle": {
+         "mode": "dashed+area"
+        }
+       }
+      },
+      "overrides": []
+     },
+     "options": {
+      "legend": {
+       "displayMode": "list",
+       "placement": "bottom"
+      },
+      "tooltip": {
+       "mode": "multi"
+      }
+     }
+    },
+    {
+     "id": 66,
+     "type": "text",
+     "title": "Change control",
+     "description": "",
+     "datasource": null,
+     "gridPos": {
+      "x": 20,
+      "y": 29,
+      "w": 4,
+      "h": 8
+     },
+     "targets": [],
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "options": {
+      "mode": "markdown",
+      "content": "A prompt or model change is not done until `evals/node_evals.py --gate` passes (ADR-0009). Every investigation's manifest records the prompt hash and model per node; compare a failing run's hashes with the last passing one. Prompts are versioned in Bedrock Prompt Management; the eval cases become an AgentCore Evaluations dataset with `evals/agentcore_dataset.py`."
+     }
+    }
+   ]
+  },
+  {
+   "id": 67,
+   "type": "row",
+   "title": "AgentCore, Bedrock and AWS resources",
+   "collapsed": true,
+   "gridPos": {
+    "x": 0,
+    "y": 17,
+    "w": 24,
+    "h": 1
+   },
+   "panels": [
+    {
+     "id": 68,
+     "type": "timeseries",
+     "title": "Online evaluation scores",
+     "description": "AgentCore Evaluations on live sessions: built-in helpfulness, correctness, tool selection and parameters, goal success, harmfulness, plus the Argus report rubric (1 to 5).",
+     "datasource": {
+      "type": "cloudwatch",
+      "uid": "cloudwatch"
+     },
+     "gridPos": {
+      "x": 0,
+      "y": 18,
+      "w": 12,
+      "h": 8
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "cloudwatch",
+        "uid": "cloudwatch"
+       },
+       "queryMode": "Metrics",
+       "region": "default",
+       "metricQueryType": 0,
+       "metricEditorMode": 1,
+       "expression": "SEARCH('{Bedrock-AgentCore/Evaluations}', 'Average', 300)",
+       "label": "${PROP('MetricName')} ${PROP('Dim.EvaluatorName')}",
+       "period": "300",
+       "statistic": "Average",
+       "namespace": "Bedrock-AgentCore/Evaluations",
+       "metricName": "",
+       "dimensions": {},
+       "matchExact": false
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "options": {
+      "legend": {
+       "displayMode": "list",
+       "placement": "bottom"
+      },
+      "tooltip": {
+       "mode": "multi"
+      }
+     }
+    },
+    {
+     "id": 69,
+     "type": "timeseries",
+     "title": "Agent and tool-server invocations",
+     "description": "InvokeAgentRuntime calls per AgentCore runtime: the four agents and the four MCP tool servers, summed over runtime ids so a redeploy does not split a line.",
+     "datasource": {
+      "type": "cloudwatch",
+      "uid": "cloudwatch"
+     },
+     "gridPos": {
+      "x": 12,
+      "y": 18,
+      "w": 12,
+      "h": 8
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "cloudwatch",
+        "uid": "cloudwatch"
+       },
+       "queryMode": "Metrics",
+       "region": "default",
+       "metricQueryType": 0,
+       "metricEditorMode": 1,
+       "expression": "SUM(SEARCH('{AWS/Bedrock-AgentCore,Name,Operation,Resource} MetricName=\"Invocations\" Name=\"argus_watch::DEFAULT\"', 'Sum', 300))",
+       "label": "agent \u00b7 watch",
+       "period": "300",
+       "statistic": "Sum",
+       "namespace": "",
+       "metricName": "",
+       "dimensions": {},
+       "matchExact": false
+      },
+      {
+       "refId": "B",
+       "datasource": {
+        "type": "cloudwatch",
+        "uid": "cloudwatch"
+       },
+       "queryMode": "Metrics",
+       "region": "default",
+       "metricQueryType": 0,
+       "metricEditorMode": 1,
+       "expression": "SUM(SEARCH('{AWS/Bedrock-AgentCore,Name,Operation,Resource} MetricName=\"Invocations\" Name=\"argus_investigator::DEFAULT\"', 'Sum', 300))",
+       "label": "agent \u00b7 investigator",
+       "period": "300",
+       "statistic": "Sum",
+       "namespace": "",
+       "metricName": "",
+       "dimensions": {},
+       "matchExact": false
+      },
+      {
+       "refId": "C",
+       "datasource": {
+        "type": "cloudwatch",
+        "uid": "cloudwatch"
+       },
+       "queryMode": "Metrics",
+       "region": "default",
+       "metricQueryType": 0,
+       "metricEditorMode": 1,
+       "expression": "SUM(SEARCH('{AWS/Bedrock-AgentCore,Name,Operation,Resource} MetricName=\"Invocations\" Name=\"argus_tasking::DEFAULT\"', 'Sum', 300))",
+       "label": "agent \u00b7 tasking",
+       "period": "300",
+       "statistic": "Sum",
+       "namespace": "",
+       "metricName": "",
+       "dimensions": {},
+       "matchExact": false
+      },
+      {
+       "refId": "D",
+       "datasource": {
+        "type": "cloudwatch",
+        "uid": "cloudwatch"
+       },
+       "queryMode": "Metrics",
+       "region": "default",
+       "metricQueryType": 0,
+       "metricEditorMode": 1,
+       "expression": "SUM(SEARCH('{AWS/Bedrock-AgentCore,Name,Operation,Resource} MetricName=\"Invocations\" Name=\"argus_orchestrator::DEFAULT\"', 'Sum', 300))",
+       "label": "agent \u00b7 orchestrator",
+       "period": "300",
+       "statistic": "Sum",
+       "namespace": "",
+       "metricName": "",
+       "dimensions": {},
+       "matchExact": false
+      },
+      {
+       "refId": "E",
+       "datasource": {
+        "type": "cloudwatch",
+        "uid": "cloudwatch"
+       },
+       "queryMode": "Metrics",
+       "region": "default",
+       "metricQueryType": 0,
+       "metricEditorMode": 1,
+       "expression": "SUM(SEARCH('{AWS/Bedrock-AgentCore,Name,Operation,Resource} MetricName=\"Invocations\" Name=\"argus_tool_ais::DEFAULT\"', 'Sum', 300))",
+       "label": "tool server \u00b7 ais",
+       "period": "300",
+       "statistic": "Sum",
+       "namespace": "",
+       "metricName": "",
+       "dimensions": {},
+       "matchExact": false
+      },
+      {
+       "refId": "F",
+       "datasource": {
+        "type": "cloudwatch",
+        "uid": "cloudwatch"
+       },
+       "queryMode": "Metrics",
+       "region": "default",
+       "metricQueryType": 0,
+       "metricEditorMode": 1,
+       "expression": "SUM(SEARCH('{AWS/Bedrock-AgentCore,Name,Operation,Resource} MetricName=\"Invocations\" Name=\"argus_tool_geo::DEFAULT\"', 'Sum', 300))",
+       "label": "tool server \u00b7 geo",
+       "period": "300",
+       "statistic": "Sum",
+       "namespace": "",
+       "metricName": "",
+       "dimensions": {},
+       "matchExact": false
+      },
+      {
+       "refId": "G",
+       "datasource": {
+        "type": "cloudwatch",
+        "uid": "cloudwatch"
+       },
+       "queryMode": "Metrics",
+       "region": "default",
+       "metricQueryType": 0,
+       "metricEditorMode": 1,
+       "expression": "SUM(SEARCH('{AWS/Bedrock-AgentCore,Name,Operation,Resource} MetricName=\"Invocations\" Name=\"argus_tool_imagery::DEFAULT\"', 'Sum', 300))",
+       "label": "tool server \u00b7 imagery",
+       "period": "300",
+       "statistic": "Sum",
+       "namespace": "",
+       "metricName": "",
+       "dimensions": {},
+       "matchExact": false
+      },
+      {
+       "refId": "H",
+       "datasource": {
+        "type": "cloudwatch",
+        "uid": "cloudwatch"
+       },
+       "queryMode": "Metrics",
+       "region": "default",
+       "metricQueryType": 0,
+       "metricEditorMode": 1,
+       "expression": "SUM(SEARCH('{AWS/Bedrock-AgentCore,Name,Operation,Resource} MetricName=\"Invocations\" Name=\"argus_tool_registry::DEFAULT\"', 'Sum', 300))",
+       "label": "tool server \u00b7 registry",
+       "period": "300",
+       "statistic": "Sum",
+       "namespace": "",
+       "metricName": "",
+       "dimensions": {},
+       "matchExact": false
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "options": {
+      "legend": {
+       "displayMode": "list",
+       "placement": "bottom"
+      },
+      "tooltip": {
+       "mode": "multi"
+      }
+     }
+    },
+    {
+     "id": 70,
+     "type": "timeseries",
+     "title": "Gateway tool calls",
+     "description": "Calls through the two AgentCore gateways: each MCP tool as server.tool (the tools gateway) and the A2A agent calls (the agents gateway).",
+     "datasource": {
+      "type": "cloudwatch",
+      "uid": "cloudwatch"
+     },
+     "gridPos": {
+      "x": 0,
+      "y": 26,
+      "w": 12,
+      "h": 8
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "cloudwatch",
+        "uid": "cloudwatch"
+       },
+       "queryMode": "Metrics",
+       "namespace": "AWS/Bedrock-AgentCore",
+       "metricName": "Invocations",
+       "dimensions": {
+        "Operation": [
+         "InvokeGateway"
+        ],
+        "Name": [
+         "*"
+        ],
+        "Method": [
+         "*"
+        ],
+        "Protocol": [
+         "*"
+        ]
+       },
+       "statistic": "Sum",
+       "period": "300",
+       "region": "default",
+       "label": "${PROP('Dim.Name')}",
+       "metricQueryType": 0,
+       "metricEditorMode": 0,
+       "matchExact": true
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "options": {
+      "legend": {
+       "displayMode": "list",
+       "placement": "bottom"
+      },
+      "tooltip": {
+       "mode": "multi"
+      }
+     },
+     "transformations": [
+      {
+       "id": "renameByRegex",
+       "options": {
+        "regex": "^(\\w+?)___(\\w+)$",
+        "renamePattern": "$1.$2"
+       }
+      },
+      {
+       "id": "renameByRegex",
+       "options": {
+        "regex": "^InvokeHttp$",
+        "renamePattern": "agents gateway \u00b7 A2A"
+       }
+      }
+     ]
+    },
+    {
+     "id": 71,
+     "type": "timeseries",
+     "title": "Memory operations",
+     "description": "AgentCore Memory: events written and read, records retrieved, and the extraction and consolidation runs behind long-term recall.",
+     "datasource": {
+      "type": "cloudwatch",
+      "uid": "cloudwatch"
+     },
+     "gridPos": {
+      "x": 12,
+      "y": 26,
+      "w": 12,
+      "h": 8
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "cloudwatch",
+        "uid": "cloudwatch"
+       },
+       "queryMode": "Metrics",
+       "namespace": "AWS/Bedrock-AgentCore",
+       "metricName": "Invocations",
+       "dimensions": {
+        "Operation": [
+         "*"
+        ]
+       },
+       "statistic": "Sum",
+       "period": "300",
+       "region": "default",
+       "label": "${PROP('Dim.Operation')}",
+       "metricQueryType": 0,
+       "metricEditorMode": 0,
+       "matchExact": true
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "options": {
+      "legend": {
+       "displayMode": "list",
+       "placement": "bottom"
+      },
+      "tooltip": {
+       "mode": "multi"
+      }
+     }
+    },
+    {
+     "id": 72,
+     "type": "timeseries",
+     "title": "Agent and tool-server errors",
+     "description": "System and user errors per runtime as AgentCore counts them (a 4xx from the runtime is a user error, a failed start or timeout a system error).",
+     "datasource": {
+      "type": "cloudwatch",
+      "uid": "cloudwatch"
+     },
+     "gridPos": {
+      "x": 0,
+      "y": 34,
+      "w": 8,
+      "h": 7
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "cloudwatch",
+        "uid": "cloudwatch"
+       },
+       "queryMode": "Metrics",
+       "region": "default",
+       "metricQueryType": 0,
+       "metricEditorMode": 1,
+       "expression": "SUM(SEARCH('{AWS/Bedrock-AgentCore,Name,Operation,Resource} MetricName=(\"SystemErrors\" OR \"UserErrors\") Name=\"argus_watch::DEFAULT\"', 'Sum', 300))",
+       "label": "agent \u00b7 watch",
+       "period": "300",
+       "statistic": "Sum",
+       "namespace": "",
+       "metricName": "",
+       "dimensions": {},
+       "matchExact": false
+      },
+      {
+       "refId": "B",
+       "datasource": {
+        "type": "cloudwatch",
+        "uid": "cloudwatch"
+       },
+       "queryMode": "Metrics",
+       "region": "default",
+       "metricQueryType": 0,
+       "metricEditorMode": 1,
+       "expression": "SUM(SEARCH('{AWS/Bedrock-AgentCore,Name,Operation,Resource} MetricName=(\"SystemErrors\" OR \"UserErrors\") Name=\"argus_investigator::DEFAULT\"', 'Sum', 300))",
+       "label": "agent \u00b7 investigator",
+       "period": "300",
+       "statistic": "Sum",
+       "namespace": "",
+       "metricName": "",
+       "dimensions": {},
+       "matchExact": false
+      },
+      {
+       "refId": "C",
+       "datasource": {
+        "type": "cloudwatch",
+        "uid": "cloudwatch"
+       },
+       "queryMode": "Metrics",
+       "region": "default",
+       "metricQueryType": 0,
+       "metricEditorMode": 1,
+       "expression": "SUM(SEARCH('{AWS/Bedrock-AgentCore,Name,Operation,Resource} MetricName=(\"SystemErrors\" OR \"UserErrors\") Name=\"argus_tasking::DEFAULT\"', 'Sum', 300))",
+       "label": "agent \u00b7 tasking",
+       "period": "300",
+       "statistic": "Sum",
+       "namespace": "",
+       "metricName": "",
+       "dimensions": {},
+       "matchExact": false
+      },
+      {
+       "refId": "D",
+       "datasource": {
+        "type": "cloudwatch",
+        "uid": "cloudwatch"
+       },
+       "queryMode": "Metrics",
+       "region": "default",
+       "metricQueryType": 0,
+       "metricEditorMode": 1,
+       "expression": "SUM(SEARCH('{AWS/Bedrock-AgentCore,Name,Operation,Resource} MetricName=(\"SystemErrors\" OR \"UserErrors\") Name=\"argus_orchestrator::DEFAULT\"', 'Sum', 300))",
+       "label": "agent \u00b7 orchestrator",
+       "period": "300",
+       "statistic": "Sum",
+       "namespace": "",
+       "metricName": "",
+       "dimensions": {},
+       "matchExact": false
+      },
+      {
+       "refId": "E",
+       "datasource": {
+        "type": "cloudwatch",
+        "uid": "cloudwatch"
+       },
+       "queryMode": "Metrics",
+       "region": "default",
+       "metricQueryType": 0,
+       "metricEditorMode": 1,
+       "expression": "SUM(SEARCH('{AWS/Bedrock-AgentCore,Name,Operation,Resource} MetricName=(\"SystemErrors\" OR \"UserErrors\") Name=\"argus_tool_ais::DEFAULT\"', 'Sum', 300))",
+       "label": "tool server \u00b7 ais",
+       "period": "300",
+       "statistic": "Sum",
+       "namespace": "",
+       "metricName": "",
+       "dimensions": {},
+       "matchExact": false
+      },
+      {
+       "refId": "F",
+       "datasource": {
+        "type": "cloudwatch",
+        "uid": "cloudwatch"
+       },
+       "queryMode": "Metrics",
+       "region": "default",
+       "metricQueryType": 0,
+       "metricEditorMode": 1,
+       "expression": "SUM(SEARCH('{AWS/Bedrock-AgentCore,Name,Operation,Resource} MetricName=(\"SystemErrors\" OR \"UserErrors\") Name=\"argus_tool_geo::DEFAULT\"', 'Sum', 300))",
+       "label": "tool server \u00b7 geo",
+       "period": "300",
+       "statistic": "Sum",
+       "namespace": "",
+       "metricName": "",
+       "dimensions": {},
+       "matchExact": false
+      },
+      {
+       "refId": "G",
+       "datasource": {
+        "type": "cloudwatch",
+        "uid": "cloudwatch"
+       },
+       "queryMode": "Metrics",
+       "region": "default",
+       "metricQueryType": 0,
+       "metricEditorMode": 1,
+       "expression": "SUM(SEARCH('{AWS/Bedrock-AgentCore,Name,Operation,Resource} MetricName=(\"SystemErrors\" OR \"UserErrors\") Name=\"argus_tool_imagery::DEFAULT\"', 'Sum', 300))",
+       "label": "tool server \u00b7 imagery",
+       "period": "300",
+       "statistic": "Sum",
+       "namespace": "",
+       "metricName": "",
+       "dimensions": {},
+       "matchExact": false
+      },
+      {
+       "refId": "H",
+       "datasource": {
+        "type": "cloudwatch",
+        "uid": "cloudwatch"
+       },
+       "queryMode": "Metrics",
+       "region": "default",
+       "metricQueryType": 0,
+       "metricEditorMode": 1,
+       "expression": "SUM(SEARCH('{AWS/Bedrock-AgentCore,Name,Operation,Resource} MetricName=(\"SystemErrors\" OR \"UserErrors\") Name=\"argus_tool_registry::DEFAULT\"', 'Sum', 300))",
+       "label": "tool server \u00b7 registry",
+       "period": "300",
+       "statistic": "Sum",
+       "namespace": "",
+       "metricName": "",
+       "dimensions": {},
+       "matchExact": false
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "options": {
+      "legend": {
+       "displayMode": "list",
+       "placement": "bottom"
+      },
+      "tooltip": {
+       "mode": "multi"
+      }
+     }
+    },
+    {
+     "id": 73,
+     "type": "timeseries",
+     "title": "Guardrail interventions",
+     "description": "Prompts or outputs the argus-agents guardrail blocked.",
+     "datasource": {
+      "type": "cloudwatch",
+      "uid": "cloudwatch"
+     },
+     "gridPos": {
+      "x": 8,
+      "y": 34,
+      "w": 8,
+      "h": 7
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "cloudwatch",
+        "uid": "cloudwatch"
+       },
+       "queryMode": "Metrics",
+       "namespace": "AWS/Bedrock/Guardrails",
+       "metricName": "InvocationsIntervened",
+       "dimensions": {
+        "GuardrailId": [
+         "*"
+        ]
+       },
+       "statistic": "Sum",
+       "period": "60",
+       "region": "default",
+       "label": "${PROP('Dim.GuardrailId')}",
+       "metricQueryType": 0,
+       "metricEditorMode": 0,
+       "matchExact": false
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "options": {
+      "legend": {
+       "displayMode": "list",
+       "placement": "bottom"
+      },
+      "tooltip": {
+       "mode": "multi"
+      }
+     }
+    },
+    {
+     "id": 74,
+     "type": "timeseries",
+     "title": "Bedrock throttles and client errors",
+     "description": "",
+     "datasource": {
+      "type": "cloudwatch",
+      "uid": "cloudwatch"
+     },
+     "gridPos": {
+      "x": 16,
+      "y": 34,
+      "w": 8,
+      "h": 7
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "cloudwatch",
+        "uid": "cloudwatch"
+       },
+       "queryMode": "Metrics",
+       "namespace": "AWS/Bedrock",
+       "metricName": "InvocationThrottles",
+       "dimensions": {
+        "ModelId": [
+         "*"
+        ]
+       },
+       "statistic": "Sum",
+       "period": "60",
+       "region": "default",
+       "label": "throttle ${PROP('Dim.ModelId')}",
+       "metricQueryType": 0,
+       "metricEditorMode": 0,
+       "matchExact": false
+      },
+      {
+       "refId": "B",
+       "datasource": {
+        "type": "cloudwatch",
+        "uid": "cloudwatch"
+       },
+       "queryMode": "Metrics",
+       "namespace": "AWS/Bedrock",
+       "metricName": "InvocationClientErrors",
+       "dimensions": {
+        "ModelId": [
+         "*"
+        ]
+       },
+       "statistic": "Sum",
+       "period": "60",
+       "region": "default",
+       "label": "client error ${PROP('Dim.ModelId')}",
+       "metricQueryType": 0,
+       "metricEditorMode": 0,
+       "matchExact": false
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {
+       "thresholds": {
+        "mode": "absolute",
+        "steps": [
+         {
+          "color": "green",
+          "value": null
+         },
+         {
+          "color": "orange",
+          "value": 1
+         },
+         {
+          "color": "red",
+          "value": 5
+         }
+        ]
+       },
+       "custom": {
+        "thresholdsStyle": {
+         "mode": "dashed+area"
+        }
+       }
+      },
+      "overrides": []
+     },
+     "options": {
+      "legend": {
+       "displayMode": "list",
+       "placement": "bottom"
+      },
+      "tooltip": {
+       "mode": "multi"
+      }
+     }
+    },
+    {
+     "id": 75,
+     "type": "timeseries",
+     "title": "ECS CPU by service",
+     "description": "",
+     "datasource": {
+      "type": "cloudwatch",
+      "uid": "cloudwatch"
+     },
+     "gridPos": {
+      "x": 0,
+      "y": 41,
+      "w": 8,
+      "h": 7
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "cloudwatch",
+        "uid": "cloudwatch"
+       },
+       "queryMode": "Metrics",
+       "namespace": "AWS/ECS",
+       "metricName": "CPUUtilization",
+       "dimensions": {
+        "ClusterName": [
+         "*"
+        ],
+        "ServiceName": [
+         "*"
+        ]
+       },
+       "statistic": "Average",
+       "period": "60",
+       "region": "default",
+       "label": "${PROP('Dim.ServiceName')}",
+       "metricQueryType": 0,
+       "metricEditorMode": 0,
+       "matchExact": false
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {
+       "unit": "percent"
+      },
+      "overrides": []
+     },
+     "options": {
+      "legend": {
+       "displayMode": "list",
+       "placement": "bottom"
+      },
+      "tooltip": {
+       "mode": "multi"
+      }
+     },
+     "transformations": [
+      {
+       "id": "renameByRegex",
+       "options": {
+        "regex": "^argus-platform-Svc(\\w+?)Service[0-9A-F]{8}-\\w+$",
+        "renamePattern": "$1"
+       }
+      }
+     ]
+    },
+    {
+     "id": 76,
+     "type": "timeseries",
+     "title": "ECS memory by service",
+     "description": "",
+     "datasource": {
+      "type": "cloudwatch",
+      "uid": "cloudwatch"
+     },
+     "gridPos": {
+      "x": 8,
+      "y": 41,
+      "w": 8,
+      "h": 7
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "cloudwatch",
+        "uid": "cloudwatch"
+       },
+       "queryMode": "Metrics",
+       "namespace": "AWS/ECS",
+       "metricName": "MemoryUtilization",
+       "dimensions": {
+        "ClusterName": [
+         "*"
+        ],
+        "ServiceName": [
+         "*"
+        ]
+       },
+       "statistic": "Average",
+       "period": "60",
+       "region": "default",
+       "label": "${PROP('Dim.ServiceName')}",
+       "metricQueryType": 0,
+       "metricEditorMode": 0,
+       "matchExact": false
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {
+       "unit": "percent"
+      },
+      "overrides": []
+     },
+     "options": {
+      "legend": {
+       "displayMode": "list",
+       "placement": "bottom"
+      },
+      "tooltip": {
+       "mode": "multi"
+      }
+     },
+     "transformations": [
+      {
+       "id": "renameByRegex",
+       "options": {
+        "regex": "^argus-platform-Svc(\\w+?)Service[0-9A-F]{8}-\\w+$",
+        "renamePattern": "$1"
+       }
+      }
+     ]
+    },
+    {
+     "id": 77,
+     "type": "timeseries",
+     "title": "Aurora capacity (ACU)",
+     "description": "",
+     "datasource": {
+      "type": "cloudwatch",
+      "uid": "cloudwatch"
+     },
+     "gridPos": {
+      "x": 16,
+      "y": 41,
+      "w": 8,
+      "h": 7
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "cloudwatch",
+        "uid": "cloudwatch"
+       },
+       "queryMode": "Metrics",
+       "namespace": "AWS/RDS",
+       "metricName": "ServerlessDatabaseCapacity",
+       "dimensions": {
+        "DBClusterIdentifier": [
+         "*"
+        ]
+       },
+       "statistic": "Average",
+       "period": "60",
+       "region": "default",
+       "label": "${PROP('Dim.DBClusterIdentifier')}",
+       "metricQueryType": 0,
+       "metricEditorMode": 0,
+       "matchExact": false
+      }
+     ],
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "options": {
+      "legend": {
+       "displayMode": "list",
+       "placement": "bottom"
+      },
+      "tooltip": {
+       "mode": "multi"
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

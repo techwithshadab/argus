@@ -1,0 +1,38 @@
+# Default pipeline: traces to Tempo, metrics to Prometheus (scrape), logs to Loki.
+receivers:
+  otlp:
+    protocols:
+      grpc: {endpoint: 0.0.0.0:4317}
+      http: {endpoint: 0.0.0.0:4318}
+processors:
+  batch: {timeout: 2s}
+  filter/health:  # health-check spans would dominate every trace store
+    error_mode: ignore
+    traces:
+      span: ['IsMatch(name, "^(GET|HEAD) /(health|ping|api/health|api/public/health|-/ready|ready)$")']
+  memory_limiter: {check_interval: 1s, limit_mib: 400}
+  transform/session:  # fold `rt-<investigation id>-<role>` runtime sessions back to the investigation id
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements: ['replace_pattern(attributes["session.id"], "^rt-([0-9a-f-]{36})-.*$", "$$1")']
+  resource:
+    attributes:
+      - {key: deployment.environment, value: local, action: upsert}
+exporters:
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls: {insecure: true}
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    resource_to_telemetry_conversion: {enabled: true}
+  debug: {verbosity: basic}
+service:
+  telemetry:
+    metrics: {level: basic}
+  pipelines:
+    traces:  {receivers: [otlp], processors: [memory_limiter, resource, filter/health, transform/session, batch], exporters: [otlp/tempo]}
+    metrics: {receivers: [otlp], processors: [memory_limiter, resource, batch], exporters: [prometheus]}
+    logs:    {receivers: [otlp], processors: [memory_limiter, resource, batch], exporters: [otlphttp/loki]}
