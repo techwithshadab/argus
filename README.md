@@ -15,18 +15,27 @@ Copernicus Data Space, OpenStreetMap, OpenSanctions) can be switched on with env
 | Layer | Choice | Why |
 |---|---|---|
 | Agents | Strands Agents SDK 1.54 (watch, tasking, orchestrator) and LangGraph 1.2 + LangChain 1.3 (investigator) | Shows that A2A and MCP make the framework a per-agent decision |
-| Agent hosting | Amazon Bedrock AgentCore Runtime (4 runtimes: 3 x A2A, 1 x HTTP), AgentCore Memory, optional AgentCore Gateway | Managed, session-isolated, IAM-native; VPC mode reaches private tools |
+| Agent hosting | Amazon Bedrock AgentCore: nine Runtime endpoints (four agents, four MCP servers, the tasking harness pilot), two Gateways (tools with a Cedar policy engine, agents for A2A), Agent Registry, Identity, Memory, online Evaluations, a Bedrock Guardrail and managed prompts | Managed, session-isolated, IAM-native; VPC mode keeps the agents in subnets with no internet route |
 | Tools | 4 MCP servers over streamable HTTP (official `mcp` SDK 1.29): `ais`, `registry`, `geo`, `imagery` | Deterministic evidence tools; agents reason, they do not compute anomalies themselves |
 | Agent to agent | A2A protocol (`a2a-sdk` 0.3.x via Strands; native `a2a-sdk` server for the LangGraph agent), SigV4-signed on AWS | Orchestrator discovers specialists from their agent cards |
 | Models | Amazon Bedrock with Amazon Nova by tier (Lite, 2 Lite, Pro) in production; Anthropic API, OpenAI and Google Gemini for development and eval comparison | `MODEL_PROVIDER` + `MODEL_ID`; see [Model providers](#model-providers) |
 | Data | PostGIS 17, Redis stream, synthetic AIS replay with injected anomalies (ground truth kept for evals) | Same schema locally (Postgres container) and on AWS (Aurora Serverless v2) |
-| Observability | OpenTelemetry everywhere: Strands GenAI spans, OpenInference for LangGraph, MCP tool spans, FastAPI/httpx/psycopg auto-instrumentation. Local: OTel Collector, Tempo (span metrics + service graph), Prometheus, Loki, Grafana; optional CloudWatch GenAI Observability. AWS: ADOT distro in the runtimes plus an ADOT collector on ECS to X-Ray, EMF metrics, CloudWatch Logs | One exporter, any backend |
-| Evaluation | Ground-truth recall/precision scorer, Inspect AI task, CloudWatch GenAI Observability scores | Agents never see the ground truth |
+| Observability | OpenTelemetry everywhere: Strands GenAI spans, OpenInference for LangGraph, MCP tool spans, FastAPI/httpx/psycopg auto-instrumentation. Local and AWS alike: a collector into Grafana, Tempo (span metrics and service graph), Prometheus and Loki with one generated board; on AWS also CloudWatch with Transaction Search, X-Ray, 31 alarms on an SNS topic and AgentCore's own unified telemetry | One exporter, both backends |
+| Evaluation | Ground-truth recall/precision scorer, per-node suites with regression floors (`evals/node_evals.py --gate`), an Inspect AI task, AgentCore online Evaluations with a report rubric | Agents never see the ground truth; a prompt or model change is not done until the gate passes |
 | Infra | Docker Compose locally; AWS CDK (Python) with 4 stacks | One command either way |
 
 ![How Argus works, as five blocks: the sources (positions, registries, sanction lists, maps, imagery, all treated as data); Argus in the account with Watch (five detectors, an agent raises alerts), Investigate (two lines of enquiry merged by code) and Propose (a Vessel of Interest report and a collection request); what every step carries (frozen evidence, a record of prompts, models and tools, guarded model calls, cents per case); the boundary where people decide; and the watch floor that reviews, approves and records every decision](docs/diagrams/architecture-overview.png)
 
-The AWS view with official service icons is [docs/diagrams/technical-architecture.png](docs/diagrams/technical-architecture.png) (ARCHITECTURE.md §AWS deployment).
+## Technical architecture on AWS
+
+![Argus on AWS: officers and operators arrive through a public load balancer with Cognito sign-in and AWS WAF; the platform stack runs the API, two job workers, the AIS ingest task, the OpenTelemetry collector and the Grafana task on ECS Fargate with Aurora PostGIS, SQS and EventBridge Scheduler; the agents plane runs the four agents and the four MCP tool servers on Bedrock AgentCore behind two gateways with a policy engine, the Agent Registry, Identity, Memory and Evaluations, in isolated subnets that reach AWS only through interface endpoints; Amazon Nova on Bedrock with a guardrail; CloudWatch and X-Ray beside the self-hosted Grafana, Tempo, Loki and Prometheus](docs/diagrams/technical-architecture.png)
+
+Left to right: the edge (Cognito on every listener, WAF, HTTPS only), the platform (API, workers, ingest,
+collector, Grafana task, Aurora, queues, scheduler), the agents plane on Bedrock AgentCore (four agents,
+four MCP servers, two gateways with Cedar policies, registry, identity, memory, evaluations, guardrail,
+managed prompts) in subnets with no internet route, and the two observability paths. The narrative
+version with code paths per stage is [ARCHITECTURE.md](ARCHITECTURE.md); the figure sources are in
+[docs/diagrams/](docs/diagrams/README.md).
 
 Full documentation: [docs/README.md](docs/README.md) (architecture with diagrams, technical reference, API, use cases, runbook, security, ADRs). The figures regenerate from committed sources: [docs/diagrams/README.md](docs/diagrams/README.md).
 
