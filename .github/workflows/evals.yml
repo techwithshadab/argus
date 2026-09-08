@@ -13,13 +13,16 @@ on:
 jobs:
   node-evals:
     runs-on: ubuntu-latest
+    env:
+      # A step `if` cannot read the secrets context, so the URL is mapped to env once here.
+      EVAL_API_URL: ${{ secrets.EVAL_API_URL }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - run: pip install -r evals/requirements.txt pyyaml==6.0.3 pydantic==2.13.5
       - name: assume the operator role
-        if: ${{ secrets.EVAL_API_URL != '' }}
+        if: ${{ env.EVAL_API_URL != '' }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.EVAL_AWS_ACCESS_KEY_ID }}
@@ -29,7 +32,6 @@ jobs:
           aws-region: us-east-1
       - name: node evals
         env:
-          EVAL_API_URL: ${{ secrets.EVAL_API_URL }}
           EVAL_AUTH: aws-iam
           EVAL_TLS_VERIFY: ${{ vars.EVAL_TLS_VERIFY || 'true' }}
           AWS_REGION: us-east-1

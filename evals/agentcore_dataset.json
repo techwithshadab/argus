@@ -1,0 +1,108 @@
+{
+  "scenarios": [
+    {
+      "scenario_id": "investigator-meridian-identity",
+      "turns": [
+        {
+          "input": "Scope: identity\nVessel MMSI: 511666006\nTrigger: ais_gap\nTriggering alert: {}\nReturn the InvestigationFindings JSON for your scope only."
+        }
+      ],
+      "expected_trajectory": [
+        "registry___lookup_vessel",
+        "registry___sanctions_screen"
+      ],
+      "assertions": [
+        "The findings mention Halcyon",
+        "The findings mention FICTIONAL-OFAC-SDN or OFAC or SDN",
+        "The findings mention PW or Palau",
+        "Every evidence entry cites a tool that was actually called"
+      ],
+      "metadata": {
+        "suite": "investigator",
+        "mmsi": "511666006"
+      }
+    },
+    {
+      "scenario_id": "investigator-meridian-behaviour",
+      "turns": [
+        {
+          "input": "Scope: behaviour\nVessel MMSI: 511666006\nTrigger: ais_gap\nTriggering alert: {\"kind\": \"ais_gap\", \"started_at\": \"2026-09-01T06:26:00Z\", \"ended_at\": \"2026-09-01T07:27:00Z\"}\nReturn the InvestigationFindings JSON for your scope only."
+        }
+      ],
+      "expected_trajectory": [
+        "ais___get_vessel_track",
+        "ais___find_ais_gaps"
+      ],
+      "assertions": [
+        "The findings mention gap",
+        "The findings mention corridor",
+        "The findings mention rendezvous or NAVAND",
+        "Every evidence entry cites a tool that was actually called"
+      ],
+      "metadata": {
+        "suite": "investigator",
+        "mmsi": "511666006"
+      }
+    },
+    {
+      "scenario_id": "investigator-liberty-identity",
+      "turns": [
+        {
+          "input": "Scope: identity\nVessel MMSI: 636222002\nTrigger: mmsi_spoof\nTriggering alert: {}\nReturn the InvestigationFindings JSON for your scope only."
+        }
+      ],
+      "expected_trajectory": [
+        "registry___lookup_vessel",
+        "registry___sanctions_screen"
+      ],
+      "assertions": [
+        "The findings mention Grace Bulk",
+        "The findings mention spoof or conflict or two positions or two locations or implausible",
+        "The findings do not claim sanction",
+        "Every evidence entry cites a tool that was actually called"
+      ],
+      "metadata": {
+        "suite": "investigator",
+        "mmsi": "636222002"
+      }
+    },
+    {
+      "scenario_id": "tasking-dark-gap-in-corridor",
+      "turns": [
+        {
+          "input": "Vessel MMSI: 511666006\nBehaviour summary: 61-minute AIS gap ending inside the Subsea Cable Corridor Kappa, then transit west at 14 kn.\nEvidence gap (position and time where evidence is missing): ais_gap from 2026-09-01T06:26:00Z to 2026-09-01T07:27:00Z near 33.45E 34.0N; vessel reappeared 12 nm west.\nDecide whether collection would help and, if so, propose it. Return the TaskingRecommendation JSON."
+        }
+      ],
+      "expected_trajectory": [
+        "imagery___search_sentinel_scenes"
+      ],
+      "assertions": [
+        "The recommendation recommends collection",
+        "The output is a TaskingRecommendation JSON object"
+      ],
+      "metadata": {
+        "suite": "tasking",
+        "mmsi": "511666006"
+      }
+    },
+    {
+      "scenario_id": "tasking-short-explained-gap",
+      "turns": [
+        {
+          "input": "Vessel MMSI: 210111001\nBehaviour summary: Container ship on a steady transit; 12-minute AIS gap in open water, reappeared on track.\nEvidence gap (position and time where evidence is missing): 12-minute gap at 2026-09-01T03:00:00Z near 33.5E 34.5N, on the expected track.\nDecide whether collection would help and, if so, propose it. Return the TaskingRecommendation JSON."
+        }
+      ],
+      "expected_trajectory": [
+        "imagery___search_sentinel_scenes"
+      ],
+      "assertions": [
+        "The recommendation does not recommend collection",
+        "The output is a TaskingRecommendation JSON object"
+      ],
+      "metadata": {
+        "suite": "tasking",
+        "mmsi": "210111001"
+      }
+    }
+  ]
+}
