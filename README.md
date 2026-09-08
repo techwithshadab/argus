@@ -342,4 +342,4 @@ Every row is in the repository and deployed; `docs/ROADMAP.md` lists what comes 
 
 ## Licence
 
-Apache License 2.0. See [LICENSE](LICENSE).
+MIT License. See [LICENSE](LICENSE).
