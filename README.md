@@ -89,6 +89,11 @@ specialists in the Agent Registry and calls them through the agents gateway with
 images and environment variable names are identical to the compose stack. Everything is created by
 CDK and removed by `make destroy`; cdk-nag runs on every synth.
 
+After the deploy, `docs/ACCESS.md` says where everything is and how officers sign in (Cognito
+hosted page, temporary password by email, optional or mandatory MFA). Tooling reaches `/api/*`
+with a caller token instead of the browser sign-in: `make eval-aws` assumes the `argus-operator`
+role and runs the node evals against the deployment.
+
 ## Repository layout
 
     agents/                 shared/ (config, schemas, prompts, telemetry, MCP + A2A helpers), watch/, investigator/, tasking/, orchestrator/
@@ -175,7 +180,7 @@ The orchestrator is code: identity and behaviour Investigator branches run in pa
 
 One page, no build step (`services/ui/index.html`). Tabs for Alerts, Investigations, Tasking and Audit; the map shows the watched area, zones, vessels as circles with a course vector (length grows with speed, dimmed when stale), a ring for vessels under investigation, and tracks with start/latest markers, hover details per report and silent periods drawn as dashed red segments with their duration. Track and Esc toggle a track off; layer toggles sit top-left. Alerts filter by severity, reviewed state, text and sort order; keyboard: `j`/`k` select, `i` investigate, `t` track, `Shift+A` / `Shift+R` accept or reject. Reports open by deep link (`?investigation=<id>`), can be copied as a link, exported as JSON or printed. The header shows feed mode (replay or live AIS), time since the last report, the scenario clock and the watched area (`GET /area`).
 
-Coverage: Argus watches one area of interest per deployment, the scenario bounding box in replay and the same box subscribed on AISStream in live mode. It is not a global feed.
+Coverage: Argus watches the scenario's bounding box plus the `data/areas.yaml` regions named by `WATCH_AREAS` (`all` by default); live mode subscribes to every watched box on AISStream in one session, replay has data only in the scenario's box. The header's watching selector fits the map to one region and filters the vessels shown; alerts stay global. It is not a global feed.
 
 ## AWS lifecycle (all through CDK)
 

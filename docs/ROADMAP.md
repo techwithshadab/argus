@@ -9,7 +9,7 @@ Foundations everything else records into.
 - Done: one IAM role per agent (`argus-agent-*`); MCP servers and the API verify callers through STS-confirmed identity (`TOOL_AUTH=aws-iam`, no-op locally) and per-server role allowlists. ADR-0001.
 - Done: `audit_events` append-only table (trigger blocks update/delete); every state change writes actor, time, details, trace id. `GET /audit`.
 - Done: review state on alerts and investigations (`draft` -> `accepted` | `rejected`) with reviewer and time; tasking records who decided; UI shows AI drafts and review controls.
-- Open: watch-officer identity is a header until the UI load balancer gets an OIDC login (Cognito on the ALB).
+- Done: watch-officer identity comes from the load balancer's Cognito sign-in on AWS (`OFFICER_AUTH=oidc`, the signed `x-amzn-oidc-data` token verified by the API) and from a header locally. ADR-0018.
 - Done: synth-time guard refuses any `modelProvider` other than bedrock and any non-first-party Bedrock model; agents run in an isolated subnet tier with no NAT route; IAM limits model invocation to the allowed vendors. ADR-0002, ADR-0007.
 - Done: full lifecycle through CDK (`make deploy`, `update`, `stop-aws`, `start-aws`, `destroy`), X-Ray settings as custom resources, all log groups owned by CDK, bootstrap assets garbage-collected on destroy.
 
