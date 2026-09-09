@@ -1,0 +1,34 @@
+Argus
+Copyright 2026 Shadab Hussain
+
+This product includes software developed by Shadab Hussain
+(https://github.com/techwithshadab/argus).
+
+Licensed under the Apache License, Version 2.0. See the LICENSE file for the
+full terms.
+
+TRADEMARKS
+
+"Argus" and the Argus name, logo and visual identity are trademarks of the
+copyright holder. Section 6 of the Apache License, Version 2.0 grants no
+permission to use them. Forks and derived works may use the software freely
+under the licence, but must not use the Argus name or branding in a way that
+suggests endorsement by, or affiliation with, the original project.
+
+THIRD-PARTY COMPONENTS
+
+This project builds on open source software and public data services, each
+under its own licence and terms, including but not limited to: Strands Agents
+SDK, LangGraph and LangChain, the Model Context Protocol SDK, the A2A SDK, the
+AWS SDK for Python and the AWS Cloud Development Kit, FastAPI, psycopg,
+PostGIS and PostgreSQL, Redis, OpenTelemetry, Grafana, Prometheus, Tempo, Loki
+and MapLibre GL JS. Basemap tiles are served by CARTO from OpenStreetMap data,
+copyright OpenStreetMap contributors, under the Open Database License.
+
+DATA SOURCES
+
+Live vessel positions come from AISStream.io, sanctions data from
+OpenSanctions and satellite scene metadata from the Copernicus Data Space
+Ecosystem, each subject to that provider's own terms of use. The scenario data
+shipped in this repository is synthetic: all vessels, owners, sanctions entries
+and zones in data/scenarios are fictional.
