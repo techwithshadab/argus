@@ -35,3 +35,7 @@ evals/results/
 *.rej
 .idea/
 .vscode/
+
+# TrustModel run artefacts: traces derived from live AIS and evaluation responses.
+artifacts/
+.venv-tm/

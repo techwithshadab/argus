@@ -75,7 +75,7 @@ def run(trace_path: Path, out_dir: Path) -> int:
         )
         return 1
     print(
-        "\nSteps 1-3 complete. Step 4 needs TRUSTMODEL_API_KEY and costs ~1 credit ($100)."
+        "\nSteps 1-3 complete. Step 4 needs TRUSTMODEL_API_KEY. Confirm live cost with `evaluate --probe`."
     )
     return 0
 

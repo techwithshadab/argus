@@ -10,7 +10,7 @@ Two things the wiki never mentions and that matter most for governance:
 
 * `frameworks=["owasp-asi", "nist-ai-rmf"]` scores the run against named compliance controls.
   Without it the evaluation returns a bare TrustScore with no control mapping.
-* `mcp_scanner.create_scan()` accepts our own tool-surface findings, so the four Argus MCP
+* `client.mcp.create_scan()` accepts our own tool-surface findings, so the four Argus MCP
   servers get scan reports in the console instead of a local JSON file.
 
 Nothing spends without an explicit `--confirm`, and the credit balance is checked first so a
@@ -144,22 +144,34 @@ def submit(
     }
 
 
-def mcp_findings_for(server: str, scan: dict) -> list:
-    """Our scan findings for one server, as the SDK's McpFinding/McpThreat models."""
+def mcp_findings_for(server: str, scan: dict, tool_names: list[str]) -> list:
+    """One McpFinding per tool -- including the clean ones.
+
+    The API requires `len(findings) == total_tools` (verified against a real 400:
+    "findings length (0) must equal total_tools (10)"). That is the right contract: a scan
+    report is evidence that every tool was examined, so a clean tool is reported as
+    `safe=True, risk_score=0` rather than omitted.
+    """
     from trustmodel.models.mcp_scanner import McpFinding, McpThreat  # noqa: PLC0415
 
     by_tool: dict[str, list[dict]] = {}
     for f in scan["findings"]:
-        if f["server"] != server:
-            continue
-        by_tool.setdefault(f["tool"], []).append(f)
+        if f["server"] == server:
+            by_tool.setdefault(f["tool"], []).append(f)
 
     out = []
-    for tool, findings in sorted(by_tool.items()):
+    for name in sorted(tool_names):
+        dotted = f"{server}.{name}"
+        findings = by_tool.get(dotted, [])
+        if not findings:
+            out.append(
+                McpFinding(tool_name=dotted, risk_score=0, safe=True, threats=[])
+            )
+            continue
         worst = max(findings, key=lambda f: SEVERITY_RISK.get(f["severity"], 0))
         out.append(
             McpFinding(
-                tool_name=tool,
+                tool_name=dotted,
                 risk_score=SEVERITY_RISK.get(worst["severity"], 0),
                 safe=False,
                 threats=[
@@ -191,19 +203,27 @@ def upload_mcp_scan() -> list[dict]:
     results = []
 
     for server in scan["servers"]:
-        findings = mcp_findings_for(server, scan)
-        tools = len(inventory["servers"][server].get("tools") or [])
+        tool_names = [
+            str(t.get("name") or "")
+            for t in inventory["servers"][server].get("tools") or []
+        ]
+        findings = mcp_findings_for(server, scan, tool_names)
+        tools = len(tool_names)
         worst = "none"
         for f in findings:
             for t in f.threats or []:
                 if SEVERITY_RISK.get(t.severity, 0) > SEVERITY_RISK.get(worst, 0):
                     worst = t.severity
-        report = c.mcp_scanner.create_scan(
+        # The server rejects worst_severity="none" even though `McpScanSeverity` lists it:
+        # a clean scan must send null. Verified against a real 400:
+        #   {"worst_severity": ["must be one of low/medium/high/critical or null; got 'none'."]}
+        report = c.mcp.create_scan(
             server_name=f"argus-{server}",
-            status="ok" if not findings else "warning",
+            # Every tool yields a finding now, so status keys on unsafe ones, not count.
+            status="ok" if all(f.safe for f in findings) else "warning",
             total_tools=tools,
             blocked_tools=0,
-            worst_severity=worst,
+            worst_severity=None if worst == "none" else worst,
             findings=findings,
             scanned_at=scanned_at,
             metadata={"source": "argus", "checks": scan["checks"]},
