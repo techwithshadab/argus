@@ -20,7 +20,7 @@ observability/     collector, Prometheus (+ alert rules), Tempo, Loki, Grafana d
 docs/              ADRs, roadmap, this reference, API, use cases, runbook, security
 ```
 
-Python 3.12 everywhere; dependencies are exactly pinned across ten `requirements.txt` files, six of them per image; containers install with `uv`, CI with `pip`. Ruff (line length 88) is the only linter and formatter.
+Python 3.12 everywhere; dependencies are exactly pinned across eleven `requirements.txt` files, six of them per image; containers install with `uv`, CI with `pip`. Ruff (line length 88) is the only linter and formatter.
 
 ## 2. Services
 

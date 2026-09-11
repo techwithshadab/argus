@@ -1,0 +1,10 @@
+# TrustModel integration (branch: trustmodel). Pinned exactly, per CLAUDE.md.
+#
+# Steps 1-3 need none of this: trace_shape, mcp_scan and validate are pure stdlib, which is
+# why the unit tests stay dependency-free. Only step 4 (the paid evaluation) imports the SDK.
+#
+# 3.6.0 is the current PyPI release (checked 2026-09-11). Note the published wiki is behind
+# the package -- its API reference documents "Python SDK (v2.0.0)" and a different client
+# surface -- so `python -m services.trustmodel.evaluate --probe` reports what is actually
+# installed before anything is submitted.
+trustmodel==3.6.0

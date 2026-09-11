@@ -1,8 +1,9 @@
 """Provenance manifest (phase 4, ADR-0006): everything a report was produced with.
 
 Prompts are hashed from the files in the image, the code revision comes from GIT_SHA baked at
-build time, models are recorded per node by the graph, and MCP server versions are read from
-each server's /health. The API attaches the evidence snapshot ids when it stores the report."""
+build time, models are recorded per node by the graph, the guardrail id and version come from
+the runtime's environment, and MCP server versions are read from each server's /health. The
+API attaches the evidence snapshot ids when it stores the report."""
 
 from __future__ import annotations
 
@@ -24,6 +25,27 @@ def prompt_hashes() -> dict[str, str]:
 
 def code_revision() -> str:
     return os.getenv("GIT_SHA", "unknown")
+
+
+def guardrail() -> dict:
+    """Which Bedrock Guardrail guarded this run, read from the runtime's own environment.
+
+    Recorded per run rather than looked up later, because `CfnGuardrailVersion` is a snapshot:
+    a policy edit cuts a new version, so asking Bedrock tomorrow answers a different question
+    than "what guarded this report". An auditor needs the second.
+
+    `{}` when no guardrail is configured (local compose), so the field reads as "not recorded"
+    instead of inventing a default that would be indistinguishable from a real one.
+    """
+    gid = os.getenv("BEDROCK_GUARDRAIL_ID", "")
+    if not gid:
+        return {}
+    return {
+        "id": gid,
+        # DRAFT only ever appears locally: on AWS the runtimes get a numbered version through
+        # Fn::GetAtt [GuardrailVersion, Version] (see docs/trustmodel/DEPLOYMENT.md).
+        "version": os.getenv("BEDROCK_GUARDRAIL_VERSION", "DRAFT"),
+    }
 
 
 def mcp_versions(urls: dict[str, str], timeout: float = 3) -> dict[str, str]:
@@ -48,6 +70,7 @@ def manifest(nodes: list[dict], mcp: dict[str, str], extra: dict | None = None) 
         "code_revision": code_revision(),
         "schema_version": SCHEMA_VERSION,
         "prompts": prompt_hashes(),
+        "guardrail": guardrail(),
         "nodes": nodes,
         "mcp_servers": mcp,
         **(extra or {}),

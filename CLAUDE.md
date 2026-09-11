@@ -24,7 +24,7 @@ Argus is a multi-agent maritime dark-vessel investigation demo: Strands + LangGr
 
 ## Dependencies and style
 
-- Root `pyproject.toml` holds only ruff/pytest config. Real deps live in ten `requirements.txt` files (six per image, plus evals, inspect-ai, the CDK app and its certificate Lambda), all `==` pinned. Keep that: pin exactly, and keep the OTel SDK/instrumentation versions consistent across files.
+- Root `pyproject.toml` holds only ruff/pytest config. Real deps live in eleven `requirements.txt` files (six per image, plus evals, inspect-ai, the CDK app, its certificate Lambda and the TrustModel integration), all `==` pinned. Keep that: pin exactly, and keep the OTel SDK/instrumentation versions consistent across files.
 - Containers install with `uv pip install --system`; CI and `scripts/deploy.sh` use plain `pip`. Python 3.12 everywhere.
 - Formatter is `ruff format` at line length 88 (adopted after the codebase was written at 180; the format-on-edit hook runs it for you). Lint rules: E, F, I, B, UP. Do not add `# noqa` for rules that are not selected.
 - Never assign a `lambda` to a name (E731); write a `def`.

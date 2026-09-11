@@ -17,6 +17,7 @@ updates:
       - "/services/ais-replay"
       - "/services/api"
       - "/services/archiver"
+      - "/services/trustmodel"
     schedule:
       interval: weekly
       day: monday
