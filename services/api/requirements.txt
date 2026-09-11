@@ -3,7 +3,7 @@ uvicorn[standard]==0.52.4
 psycopg[binary,pool]==3.3.5
 redis==8.1.0
 httpx==0.28.1
-boto3==1.43.86
+boto3==1.43.89
 PyJWT==2.13.0
 cryptography==50.0.1
 pydantic==2.13.5
