@@ -58,7 +58,7 @@ def make_investigation(**over) -> dict:
                     "prompt_version": "3",
                 },
                 {
-                    "node": "identity",
+                    "node": "investigator_identity",
                     "agent": "investigator",
                     "provider": "bedrock",
                     "model_id": "amazon.nova-pro-v1:0",
@@ -66,7 +66,7 @@ def make_investigation(**over) -> dict:
                     "attempts": 1,
                 },
                 {
-                    "node": "behaviour",
+                    "node": "investigator_behaviour",
                     "agent": "investigator",
                     "provider": "bedrock",
                     "model_id": "amazon.nova-pro-v1:0",
@@ -132,8 +132,8 @@ def test_nodes_are_ordered_by_the_graph_not_by_manifest_order():
     """The manifest lists report first here; the trace must still run identity -> report."""
     spans = investigation_spans(make_investigation())
     nodes = [s["metadata"]["node"] for s in spans]
-    assert nodes.index("identity") < nodes.index("report")
-    assert nodes.index("behaviour") < nodes.index("report")
+    assert nodes.index("investigator_identity") < nodes.index("report")
+    assert nodes.index("investigator_behaviour") < nodes.index("report")
 
 
 def test_span_ids_are_unique_and_deterministic():
@@ -191,6 +191,70 @@ def test_pure_code_nodes_get_no_tool_calls():
     evidence = make_investigation()["report"]["evidence"]
     assert tool_calls_from_evidence(evidence, "join") == []
     assert tool_calls_from_evidence(evidence, "persist") == []
+
+
+def test_the_real_orchestrator_node_names_map_to_tools():
+    """The orchestrator writes `investigator_identity` / `investigator_behaviour`
+    (agents/orchestrator/app.py:260), not the bare names the graph talks about.
+
+    The first version of this exporter keyed on the bare names, so a real production manifest
+    produced a trace with ZERO tool calls — the fixtures had invented the names and the tests
+    passed against them. Verified against production investigation 4d991f3c.
+    """
+    evidence = make_investigation()["report"]["evidence"]
+    identity = [
+        c["name"] for c in tool_calls_from_evidence(evidence, "investigator_identity")
+    ]
+    behaviour = [
+        c["name"] for c in tool_calls_from_evidence(evidence, "investigator_behaviour")
+    ]
+    assert "registry.lookup_vessel" in identity
+    assert "ais.find_ais_gaps" in behaviour
+    assert "ais.find_ais_gaps" not in identity
+
+
+def test_a_production_shaped_manifest_yields_a_usable_trace():
+    """End-to-end guard: the exact node names and shape read back from production."""
+    inv = make_investigation()
+    inv["manifest"]["nodes"] = [
+        {
+            "node": "investigator_identity",
+            "agent": "investigator",
+            "provider": "bedrock",
+            "model_id": "us.amazon.nova-pro-v1:0",
+            "tier": "strong",
+            "attempts": 1,
+        },
+        {
+            "node": "investigator_behaviour",
+            "agent": "investigator",
+            "provider": "bedrock",
+            "model_id": "us.amazon.nova-pro-v1:0",
+            "tier": "strong",
+            "attempts": 1,
+        },
+        {"node": "tasking", "agent": "tasking", "attempts": 1},
+        {
+            "node": "report",
+            "agent": "orchestrator",
+            "provider": "bedrock",
+            "model_id": "us.amazon.nova-pro-v1:0",
+            "tier": "strong",
+            "attempts": 1,
+        },
+    ]
+    inv["manifest"]["guardrail"] = {"id": "oop4nkv1vyo8", "version": "1"}
+    inv["manifest"]["code_revision"] = "b266fab"
+    doc = trace_document(inv, AUDIT)
+
+    assert validate(doc) == [], validate(doc)
+    assert sum(len(s["tool_calls"]) for s in doc["spans"]) > 0, (
+        "trajectory must not be empty"
+    )
+    assert doc["metadata"]["guardrail"]["recorded"] is True
+    assert doc["metadata"]["code_revision"] == "b266fab"
+    nodes = [s["metadata"]["node"] for s in doc["spans"]]
+    assert nodes.index("investigator_identity") < nodes.index("report")
 
 
 def test_tasking_node_owns_imagery_not_ais():
@@ -262,7 +326,11 @@ def test_models_used_lists_every_distinct_model_with_its_tiers_and_nodes():
     entry = models[0]
     assert entry["provider"] == "bedrock"
     assert entry["tiers"] == ["strong"]
-    assert set(entry["nodes"]) == {"report", "identity", "behaviour"}
+    assert set(entry["nodes"]) == {
+        "report",
+        "investigator_identity",
+        "investigator_behaviour",
+    }
 
 
 def test_models_used_separates_an_escalated_run():

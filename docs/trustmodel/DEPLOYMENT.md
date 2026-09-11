@@ -138,21 +138,32 @@ This is deliberate, and it is the stronger design for an audit:
 Everything else — agent trajectory, tool plane, prompts-as-attested, responses, model
 attribution, human-in-the-loop evidence — is produced from stored data alone.
 
-## Guardrail in the trace: wired, not yet populated
+## Guardrail in the trace: implemented (commit `b266fab`)
 
-`metadata.guardrail` is in the exporter and reads `{"recorded": false}` today, because the
-manifest does not carry the guardrail. The orchestrator records `guardrail_blocked=True` when
-a block occurs (`agents/orchestrator/app.py:505-513`) but never the id or version.
+`provenance.manifest()` now carries `{"guardrail": {"id", "version"}}`, read from
+`BEDROCK_GUARDRAIL_ID` / `BEDROCK_GUARDRAIL_VERSION` in the runtime's own environment
+(`agents/shared/provenance.py`). Unconfigured (local compose) records `{}`, so the field reads
+as absent rather than as a default an auditor could not tell from a real reading.
 
-It is deliberately reported as **not recorded** rather than filled from the live deployment:
-the trace must attest to what guarded *that* run, and a lookup now would report today's
-configuration. A plausible-looking default in an audit artefact is worse than an honest blank.
+Read from the environment rather than looked up afterwards on purpose: `CfnGuardrailVersion`
+is a snapshot, so querying Bedrock later answers "what is configured now" instead of "what
+guarded this report". Eight tests pin both directions.
 
-To populate it, `provenance.manifest()` would add `{"guardrail": {"id", "version",
-"policy_hash"}}` from `BEDROCK_GUARDRAIL_ID` / `BEDROCK_GUARDRAIL_VERSION`, which the runtimes
-already hold as environment variables. Roughly three lines — but it is **agent-side and needs
-a deploy**, so it is not done unasked. Until then the verified values live in this document:
-`oop4nkv1vyo8` version **1**, policy `412ceb345d`.
+The exporter's `metadata.guardrail` reports `recorded: true` once a run made with this build
+is exported; older investigations keep `recorded: false`, which is correct — they genuinely
+did not record it.
+
+### GIT_SHA sequencing (worth knowing for any future deploy)
+
+`GIT_SHA` is a **Docker build arg** (`agents_stack.py:259-269`) resolved by `deploy.sh:92` at
+image-build time. A deploy started before a commit therefore ships the new code stamped with
+the *previous* SHA, so `code_revision` in the manifest would misattribute the run.
+
+That happened here: deploy #1 began pre-commit and baked `6db5873`. A second deploy after
+committing `b266fab` rebuilds the images — CDK fingerprints the build arg, so the changed
+`GIT_SHA` alone triggers the rebuild and runtime roll, with no code change.
+
+**Commit before deploying whenever the manifest's `code_revision` needs to be trustworthy.**
 
 ---
 

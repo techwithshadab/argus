@@ -29,7 +29,18 @@ from typing import Any
 
 #: Order the orchestrator's graph actually runs in (ADR-0003), used to sequence spans when a
 #: manifest node carries no timestamp of its own.
-NODE_ORDER = ("identity", "behaviour", "join", "tasking", "report", "persist")
+#:
+#: These are the names the orchestrator really records: the branches are written as
+#: `f"investigator_{scope}"` (agents/orchestrator/app.py:260), NOT the bare "identity" and
+#: "behaviour" the graph talks about. Verified against production investigation 4d991f3c.
+NODE_ORDER = (
+    "investigator_identity",
+    "investigator_behaviour",
+    "join",
+    "tasking",
+    "report",
+    "persist",
+)
 
 
 def sha256_of(value: Any) -> str:
@@ -59,7 +70,12 @@ def span_id_for(trace_id: str, node: str, index: int) -> str:
 #: single tool-less model call over validated JSON (CLAUDE.md), and `join`/`persist` are pure
 #: code, so attributing tool calls to them would inflate the trajectory with calls that never
 #: happened -- the opposite of what an audit wants.
+#: Keyed on the orchestrator's real node names (see NODE_ORDER). The bare "identity" and
+#: "behaviour" aliases are kept because `findings.provenance` uses them, and a future rename
+#: should not silently empty the trajectory the way the original mismatch did.
 NODE_TOOL_PREFIXES: dict[str, tuple[str, ...]] = {
+    "investigator_identity": ("registry.", "geo."),
+    "investigator_behaviour": ("ais.", "geo."),
     "identity": ("registry.", "geo."),
     "behaviour": ("ais.", "geo."),
     "tasking": ("imagery.", "geo."),
