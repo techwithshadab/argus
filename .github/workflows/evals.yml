@@ -22,13 +22,13 @@ jobs:
       # A step `if` cannot read the secrets context, so the URL is mapped to env once here.
       EVAL_API_URL: ${{ secrets.EVAL_API_URL }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: {python-version: "3.12"}
       - run: pip install -r evals/requirements.txt pyyaml==6.0.3 pydantic==2.13.5
       - name: assume the operator role
         if: ${{ env.EVAL_API_URL != '' }}
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           # The CI role is assumed from the OIDC token, then it assumes the operator role.
           role-to-assume: ${{ secrets.EVAL_CI_ROLE_ARN }}
@@ -37,7 +37,7 @@ jobs:
           aws-region: us-east-1
       - name: chain to the operator role
         if: ${{ env.EVAL_API_URL != '' }}
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.EVAL_OPERATOR_ROLE_ARN }}
           role-chaining: true
@@ -51,6 +51,6 @@ jobs:
         run: |
           if [ -z "$EVAL_API_URL" ]; then echo "::notice::EVAL_API_URL not set; node evals skipped"; exit 0; fi
           python evals/node_evals.py --api "$EVAL_API_URL" --gate --push
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with: {name: eval-results, path: evals/results/, if-no-files-found: ignore}

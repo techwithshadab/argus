@@ -4,10 +4,10 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: {python-version: "3.12"}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with: {node-version: "22"}
       - run: pip install ruff==0.16.5 pytest==9.1.1 pyyaml==6.0.3 pydantic==2.13.5
       - run: ruff check .
@@ -50,11 +50,11 @@ jobs:
   image-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: build the API image
         run: docker build -f services/api/Dockerfile -t argus-api:ci .
       - name: scan for known vulnerabilities
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: argus-api:ci
           format: table
@@ -73,8 +73,8 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U argus -d argus" --health-interval 5s --health-timeout 3s --health-retries 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: {python-version: "3.12"}
       - run: pip install pytest==9.1.1 pyyaml==6.0.3 pydantic==2.13.5 -r mcp-servers/requirements.txt
       - run: pytest -q -m integration tests/integration
