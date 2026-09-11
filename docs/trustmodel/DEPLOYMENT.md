@@ -3,6 +3,25 @@
 Pulled live with `describe-stacks`, `get-template` and `list-guardrails`. This is what any
 TrustModel evaluation is evidence *about*, so it belongs next to the report.
 
+## Verified in production
+
+Investigation `4d991f3c` (LNG GLORY, 14:52Z), read back from `/api/investigations/{id}`:
+
+```json
+"guardrail":     {"id": "oop4nkv1vyo8", "version": "1"},
+"code_revision": "b266fab"
+```
+
+The guardrail matches the deployed `GuardrailVersion` resource and `code_revision` matches the
+running commit, so the manifest now attests truthfully to both.
+
+**Verifying against a real manifest paid for itself immediately.** The exporter would have
+produced a trace with **zero tool calls**: the orchestrator records its branches as
+`f"investigator_{scope}"` (`agents/orchestrator/app.py:260`), while the exporter was keyed on
+the bare `identity` / `behaviour` names the graph talks about. Every test passed, because the
+fixtures had invented the same bare names — they agreed with the code, not with production.
+The first paid evaluation would have scored an empty trajectory. Fixed in `c18bb10`.
+
 ## Stacks
 
 | Stack | Status | Created | Last successful update |

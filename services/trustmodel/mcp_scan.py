@@ -64,7 +64,14 @@ WRITE_VERBS: tuple[str, ...] = (
 #: The one tool that legitimately writes, and only ever a `proposed` row for human approval.
 EXPECTED_WRITERS: frozenset[str] = frozenset({"imagery.create_tasking_request"})
 
-SEVERITY_RANK = {"info": 0, "low": 1, "medium": 2, "high": 3}
+#: TrustModel's vocabulary (`McpScanSeverity` in trustmodel.models.mcp_scanner), adopted here
+#: so findings map one-to-one on upload. Ours previously had `info`, which they do not accept,
+#: and lacked `critical`, which they do — a silent mismatch at the boundary.
+SEVERITY_RANK = {"none": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+
+#: TrustModel's `McpFinding.risk_score` is 0-100. Derived from severity so the two stay in
+#: step by construction; `evaluate.py` imports this rather than keeping a second copy.
+SEVERITY_RISK = {"none": 0, "low": 20, "medium": 50, "high": 80, "critical": 95}
 
 
 def _finding(server: str, tool: str, check: str, severity: str, detail: str) -> dict:
