@@ -1,6 +1,6 @@
 # ADR-0018: The watch floor signs in at the load balancer; tools sign with IAM
 
-Date: 2026-09-07. Status: accepted.
+Date: 2026-09-07. Status: accepted. Amended 2026-09-09 by ADR-0019 (the single `TOOL_ALLOWED_ROLES` list became three) and by the gap audit (the operator role's account-wide trust now requires multi-factor authentication).
 
 ## Context
 
@@ -13,8 +13,10 @@ tool servers already proved identity to each other with STS-signed caller tokens
 ## Decision
 
 1. **Cognito on every public listener.** A user pool `argus-officers` (no self sign-up,
-   officers created by an operator, MFA optional by default and `officerMfa=required`
-   to enforce it) and the ALB's own authenticate action on the HTTPS listeners for the
+   officers created by an operator, MFA optional by default so turning it on cannot
+   lock out an officer who has not enrolled an authenticator, `officerMfa=required`
+   to enforce it)
+   and the ALB's own authenticate action on the HTTPS listeners for the
    UI and Grafana. Sessions last one watch shift (8 h). HTTP redirects to HTTPS.
 2. **The API trusts the balancer's signed token, nothing else.** With
    `OFFICER_AUTH=oidc` the API verifies `x-amzn-oidc-data` (ES256 against the key the
@@ -25,9 +27,12 @@ tool servers already proved identity to each other with STS-signed caller tokens
    Locally (`OFFICER_AUTH=header`) the typed id still applies.
 3. **Non-browser callers use IAM.** Requests on `/api/*` carrying a bearer token skip
    the sign-in at the balancer (a listener rule) and are checked by the API against
-   `TOOL_ALLOWED_ROLES`, which includes `argus-operator`, a role any principal in
-   the account may assume (`operatorPrincipalArn` narrows it). `make eval-aws` assumes
-   it. Root and IAM users are not roles and are refused, on purpose.
+   `TOOL_ALLOWED_ROLES`, which includes `argus-operator`. `make eval-aws` assumes it.
+   Root and IAM users are not roles and are refused, on purpose. **Amended by
+   ADR-0019:** one list could say which callers the API admits but not which of them may
+   decide, so it became three, and an officer action now admits `argus-operator` alone.
+   That role's account-wide fallback also requires multi-factor authentication now
+   (`operatorPrincipalArn` narrows it to a named principal instead).
 4. **TLS without a domain.** A deploy without `uiCertificateArn` gets a self-signed
    certificate generated inside a Lambda at deploy time and imported into ACM (the key
    never enters a template). The same issuer gives the internal balancer's API listener

@@ -31,7 +31,17 @@ log = logging.getLogger("officerauth")
 
 DEFAULT_OFFICER = "watch-officer"
 OIDC_HEADER = "x-amzn-oidc-data"
+#: Set by the UI's nginx on everything it proxies from the public balancer.
+PUBLIC_MARK = "x-argus-public"
 PUBLIC_ROUTES = (("GET", "/health"), ("GET", "/metrics"), ("GET", "/whoami"))
+#: Public to the internal listener only. The public balancer forwards any `/api/*`
+#: request that carries a bearer header without checking it, so these were reachable
+#: from the internet, and the exposition names the running build's git revision along
+#: with alert and investigation counts (P14). They stay in PUBLIC_ROUTES because the
+#: balancer's health check and the collector's scrape must reach them without a token.
+#: The collector reaches them through the internal balancer, so the block is keyed on
+#: the public balancer's hostname, never on x-forwarded-for.
+INTERNAL_ONLY_ROUTES = (("GET", "/health"), ("GET", "/metrics"))
 KEY_TTL_S = 6 * 60 * 60
 
 # Set by OfficerAuthMiddleware for the request being served; read by the caller-auth
@@ -45,6 +55,37 @@ def mode() -> str:
 
 def is_public(path: str, method: str) -> bool:
     return matches_route(PUBLIC_ROUTES, path, method)
+
+
+def is_internal_only(path: str, method: str) -> bool:
+    return matches_route(INTERNAL_ONLY_ROUTES, path, method)
+
+
+def arrived_through_the_public_balancer(headers: dict) -> bool:
+    """True when the request came in through the internet-facing balancer.
+
+    Two signals: the mark the UI's nginx sets on what it proxies, and the `Host`
+    header matched against PUBLIC_HOST, the public balancer's DNS name.
+    An earlier version tested `x-forwarded-for` on the theory that only the public
+    balancer sets it; that was wrong. The collector scrapes the API through the
+    *internal* balancer (`https://<internal-alb>:8000/metrics`), so its scrapes carry
+    `x-forwarded-for` too and were answered 404 — the API's metrics silently stopped
+    reaching Prometheus while `argus-api-scrape-lost` fired correctly.
+
+    With PUBLIC_HOST unset (local compose, tests) nothing matches and the routes stay
+    reachable, which is the local contract.
+    """
+    # The UI's nginx proxies /api/* to the API and rewrites Host, so a public request
+    # can arrive looking internal; it marks those instead (services/ui/nginx.conf).
+    # Forging the header can only ever restrict a caller, never admit one.
+    if headers.get(PUBLIC_MARK) == "1":
+        return True
+    public = os.getenv("PUBLIC_HOST", "").strip().lower()
+    if not public:
+        return False
+    host = headers.get("host", "").strip().lower()
+    # The Host header may carry a port; the balancer's DNS name never does.
+    return host.split(":", 1)[0] == public
 
 
 def officer_from_claims(claims: dict) -> str:
@@ -148,6 +189,10 @@ class OfficerAuthMiddleware:
         state["officer"] = ""
         token = _signed_in.set(False)
         try:
+            if is_internal_only(
+                scope["path"], scope["method"]
+            ) and arrived_through_the_public_balancer(headers):
+                return await _reject(send, 404, "not found")
             if mode() == "oidc":
                 raw = headers.get(OIDC_HEADER, "")
                 if raw:

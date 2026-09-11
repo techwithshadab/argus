@@ -15,6 +15,7 @@ from aws_cdk import RemovalPolicy, Stack
 from aws_cdk import aws_bedrockagentcore as agentcore
 from aws_cdk import aws_ecr_assets as ecr_assets
 from aws_cdk import aws_iam as iam
+from aws_cdk import custom_resources as cr
 
 from .tool_policy import policies
 
@@ -91,6 +92,36 @@ def build_tool_plane(
             description=f"Argus {name} MCP server",
         )
         rt.node.add_dependency(tool_role)
+        # AgentCore creates the runtime's log group itself, so nothing in the stack owns
+        # it and `cdk destroy` left one behind per tool server. Declaring an
+        # `AWS::Logs::LogGroup` for these is forbidden (it fights AgentCore), so the
+        # deletion goes through the SDK, exactly as the agent runtimes do (I6).
+        cr.AwsCustomResource(
+            stack,
+            f"ToolLogs{name.title()}",
+            on_delete=cr.AwsSdkCall(
+                service="CloudWatchLogs",
+                action="deleteLogGroup",
+                parameters={
+                    "logGroupName": (
+                        f"/aws/bedrock-agentcore/runtimes/{rt.attr_agent_runtime_id}-DEFAULT"
+                    )
+                },
+                # Without this a failed rollback wedges the stack.
+                ignore_error_codes_matching=".*",
+            ),
+            policy=cr.AwsCustomResourcePolicy.from_statements(
+                [
+                    iam.PolicyStatement(
+                        actions=["logs:DeleteLogGroup"],
+                        resources=[
+                            f"arn:aws:logs:{stack.region}:{stack.account}:log-group:/aws/bedrock-agentcore/*",
+                            f"arn:aws:logs:{stack.region}:{stack.account}:log-group:/aws/bedrock-agentcore/*:*",
+                        ],
+                    )
+                ]
+            ),
+        ).node.add_dependency(rt)
         runtimes[name] = rt
 
     # ---- gateway execution role: may invoke exactly the tool runtimes ----

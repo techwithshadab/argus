@@ -13,7 +13,7 @@ Date: 2026-09-08. Scope: the whole repository and the AWS deployment (us-east-1,
 | Security | Strong | Cognito sign-in and WAF on an HTTPS-only public balancer, HTTPS on the internal API listener, per-agent IAM, STS-signed callers, isolated subnets, Bedrock-only, guardrail, deploy and operator roles instead of root |
 | Compliance and governance | Strong | Encrypted personal data, append-only audit, retention classes with lifecycle to Deep Archive, review states vs approvals, eighteen ADRs, access logs on balancers and archive |
 | Safety | Strong | Human gate in the API, policy check on every report, untrusted marking of every feed text, Bedrock Guardrail without PII masking |
-| Reliability | Adequate | Queue and worker per kind, heartbeat and reclaim, timeout ladder, circuit breakers, degraded branches, 31 alarms; agents in one zone, in-flight graph state lost on a worker restart |
+| Reliability | Adequate | Queue and worker per kind, heartbeat and reclaim, timeout ladder, circuit breakers, degraded branches, 36 alarms; agents in one zone, in-flight graph state lost on a worker restart |
 | Scalability | Adequate | Serverless Aurora and Valkey, four investigation workers; no autoscaling |
 | Observability | Strong | OTel end to end, AgentCore telemetry in CloudWatch with Transaction Search, self-hosted Grafana stack, Grafana rules plus CloudWatch alarms that stay up when the API is down |
 | Identity per agent | Strong | One IAM role per runtime and task, allowlists per tool server, orchestrator alone may invoke specialists |
@@ -73,7 +73,7 @@ Date: 2026-09-08. Scope: the whole repository and the AWS deployment (us-east-1,
 
 ## 8. Reliability
 
-**Evidence.** One queue and one worker service per job kind, a timeout ladder pinned by tests, a visibility heartbeat and `reclaim` on redelivery (ADR-0016); idempotency keys; deployment circuit breakers with rollback; 31 CloudWatch alarms on AWS-side metrics with the runbook table pinned by a test; the `argus-api-scrape-lost` rule that says when the Grafana rules are blind; degraded branches counted as a metric and alarmed.
+**Evidence.** One queue and one worker service per job kind, a timeout ladder pinned by tests, a visibility heartbeat and `reclaim` on redelivery (ADR-0016); idempotency keys; deployment circuit breakers with rollback; 36 CloudWatch alarms on AWS-side metrics with the runbook table pinned by a test; the `argus-api-scrape-lost` rule that says when the Grafana rules are blind; degraded branches counted as a metric and alarmed.
 
 **Gaps.** Agents in a single availability zone (AgentCore zone restriction with the two-zone VPC; a new VPC is needed to add one); a worker restart loses the in-flight graph state and restarts the job (a checkpointer that the isolated agents can reach is the roadmap item); no synthetic probe from outside the VPC.
 

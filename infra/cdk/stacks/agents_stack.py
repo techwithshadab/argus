@@ -487,6 +487,9 @@ class AgentsStack(Stack):
             "AWS_REGION": self.region,
             "DEPLOY_ENV": "aws",
             "AIS_MODE": platform.ais_mode,
+            # Both the ais and imagery servers read the scenario clock; without it they
+            # fall back to a module default that drifts from `-c scenarioEnd` (A7).
+            "SCENARIO_END": scenario_end,
             "PGHOST": data.cluster.cluster_endpoint.hostname,
             "PGPORT": "5432",
             "PGDATABASE": "argus",
@@ -597,14 +600,14 @@ class AgentsStack(Stack):
                 on_create=cr.AwsSdkCall(
                     service="CloudWatchLogs",
                     action="putRetentionPolicy",
-                    parameters={"logGroupName": group, "retentionInDays": 3},
+                    parameters={"logGroupName": group, "retentionInDays": 30},
                     physical_resource_id=cr.PhysicalResourceId.of(f"argus-logs-{name}"),
                     ignore_error_codes_matching="ResourceNotFoundException",
                 ),
                 on_update=cr.AwsSdkCall(
                     service="CloudWatchLogs",
                     action="putRetentionPolicy",
-                    parameters={"logGroupName": group, "retentionInDays": 3},
+                    parameters={"logGroupName": group, "retentionInDays": 30},
                     physical_resource_id=cr.PhysicalResourceId.of(f"argus-logs-{name}"),
                     ignore_error_codes_matching="ResourceNotFoundException",
                 ),
@@ -617,8 +620,16 @@ class AgentsStack(Stack):
                 policy=cr.AwsCustomResourcePolicy.from_statements(
                     [
                         iam.PolicyStatement(
-                            actions=["logs:PutRetentionPolicy", "logs:DeleteLogGroup"],
-                            resources=["*"],
+                            # DeleteLogGroup on every group in the account was a much
+                            # sharper edge than the read beside it (I11).
+                            actions=[
+                                "logs:PutRetentionPolicy",
+                                "logs:DeleteLogGroup",
+                            ],
+                            resources=[
+                                f"arn:aws:logs:{self.region}:{self.account}:log-group:/aws/bedrock-agentcore/*",
+                                f"arn:aws:logs:{self.region}:{self.account}:log-group:/aws/bedrock-agentcore/*:*",
+                            ],
                         )
                     ]
                 ),

@@ -1,0 +1,54 @@
+# Dependency updates, grouped so a bump is one review rather than ten.
+#
+# Every requirements file here is `==` pinned on purpose (CLAUDE.md): pins make an image
+# reproducible, and they also mean nothing moves until someone moves it. Dependabot is
+# the someone. Weekly, grouped by ecosystem, so the OpenTelemetry SDK and its
+# instrumentation packages stay on matching versions rather than drifting apart in
+# separate pull requests.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directories:
+      - "/agents"
+      - "/evals"
+      - "/infra/cdk"
+      - "/infra/cdk/lambdas/selfsigned"
+      - "/mcp-servers"
+      - "/services/ais-replay"
+      - "/services/api"
+      - "/services/archiver"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      opentelemetry:
+        patterns: ["opentelemetry*"]
+      aws:
+        patterns: ["boto3", "botocore", "aws-cdk*", "bedrock-agentcore*"]
+      agent-frameworks:
+        patterns: ["strands*", "langgraph*", "langchain*", "a2a*", "mcp"]
+      dev:
+        patterns: ["ruff", "pytest*"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Base images: the containers pin a digest-free tag, so a rebuild already picks up
+  # patches, but a major version bump should still be a reviewed change.
+  - package-ecosystem: docker
+    directories:
+      - "/services/api"
+      - "/services/ais-replay"
+      - "/services/archiver"
+      - "/services/ui"
+      - "/mcp-servers"
+      - "/agents"
+    schedule:
+      interval: monthly

@@ -28,7 +28,7 @@ Actors: **Watch Officer** (reviews findings, approves actions), **Analyst** (rea
 1. Two Investigator branches run in parallel: *identity* (registry, `ownership_network`, `sanctions_screen`, `flag_history`) and *behaviour* (`get_vessel_track`, detectors, `point_in_zones`, `nearest_ports`, `find_vessels_near`).
 2. The orchestrator merges them deterministically (owning branch wins each field, lists unioned, confidence the lower).
 3. The Tasking agent gets the extracted evidence gap and decides whether imagery would materially reduce uncertainty; if so it creates a `proposed` tasking request.
-4. The report node writes the VOI report from the merged JSON only; the policy check enforces allowed actions and evidence traceability, with one retry.
+4. The report node writes the VOI report from the merged JSON only; the policy check enforces allowed actions and evidence traceability, retrying once on a hard problem and accepting a report that still states no counter-indicators or gaps with a caveat (ADR-0020).
 5. The report, evidence snapshots and provenance manifest are persisted.
 
 **Outcome.** A VOI report with headline, priority, confidence, timeline, indicators and counter-indicators, ownership and sanctions, recommended actions, collection plan, evidence, gaps and caveats. Reproducible months later from the snapshots and the manifest.

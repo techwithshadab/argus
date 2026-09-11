@@ -6,10 +6,12 @@ import argparse
 import json
 import os
 import sys
+import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
-from scoring import overlap, score  # noqa: F401  (pure, unit-tested)
+from scoring import overlap, raised_since, score  # noqa: F401  (pure, unit-tested)
 
 _client = None
 
@@ -57,9 +59,28 @@ def push_to_cloudwatch(result: dict, region: str = "us-east-1") -> None:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--api", default=os.getenv("API_URL", "http://localhost:8000"))
+    ap.add_argument(
+        "--since",
+        default=os.getenv("EVAL_SINCE"),
+        help="score only alerts created at or after this ISO timestamp "
+        "(default: everything, which measures the deployment's whole history)",
+    )
+    ap.add_argument(
+        "--sweep",
+        action="store_true",
+        help="run a sweep first and score only what it raises",
+    )
     args = ap.parse_args()
+    since = args.since
+    if args.sweep:
+        since = datetime.now(UTC).isoformat()
+        http().post(f"{args.api}/sweep?hours=12")
+        # The sweep is queued, then the Watch agent works through its candidates.
+        time.sleep(float(os.getenv("EVAL_SWEEP_WAIT_S", "90")))
     truth = http().get(f"{args.api}/ground-truth").json()
-    alerts = http().get(f"{args.api}/alerts").json()
+    alerts = raised_since(http().get(f"{args.api}/alerts").json(), since)
     result = score(truth, alerts)
+    if since:
+        result["since"] = since
     print(json.dumps(result, indent=1))
     push_to_cloudwatch(result)

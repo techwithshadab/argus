@@ -15,6 +15,20 @@ header{grid-column:1/3;display:flex;align-items:center;gap:.9rem;padding:0 .9rem
 header .status{min-width:0;overflow:hidden;text-overflow:ellipsis}
 @media (max-width:1250px){.legend{display:none}}
 @media (max-width:1050px){header .status span:nth-child(3){display:none}}
+/* Below this the aside's 360px floor left the map a sliver and the header truncated,
+   so the two columns stack instead (U8). The body scrolls here; it cannot at full
+   width, where each pane scrolls on its own. */
+@media (max-width:750px){
+  body{grid-template-columns:1fr;grid-template-rows:auto 45vh 1fr;overflow:auto;height:auto;min-height:100vh}
+  header{grid-column:1;flex-wrap:wrap;height:auto;white-space:normal;padding:.5rem .9rem}
+  #map{grid-column:1;grid-row:2;min-height:280px}
+  aside{grid-column:1;grid-row:3;border-left:0;border-top:1px solid var(--line)}
+  .officer input{width:7rem}
+}
+/* An officer who has asked for less motion gets a static bar and instant map moves. */
+@media (prefers-reduced-motion:reduce){
+  .bar i{animation:none;width:100%;opacity:.45}
+}
 header h1{font-size:1rem;font-weight:600;margin:0}
 .mono{font-family:"IBM Plex Mono",monospace}
 .status{color:var(--muted);font-size:.85rem;display:flex;gap:.9rem;align-items:center}
@@ -56,7 +70,7 @@ aside{grid-column:2;grid-row:2;display:flex;flex-direction:column;border-left:1p
 .alert .row{flex-wrap:wrap}
 .tabs button{white-space:nowrap;padding:.6rem .2rem}
 .filters input[type=text],.filters select{background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:3px;padding:.25rem .4rem;font:inherit;font-size:.8rem}
-.chip{border:1px solid var(--line);border-radius:10px;padding:.05rem .5rem;cursor:pointer;color:var(--muted)}
+.chip{border:1px solid var(--line);border-radius:10px;padding:.05rem .5rem;cursor:pointer;color:var(--muted);background:transparent;font:inherit}
 .chip.on{color:var(--ink);border-color:var(--ink)}
 .chip.high.on{border-color:var(--red);color:var(--red)}.chip.medium.on{border-color:var(--amber);color:var(--amber)}
 .hint{color:var(--muted);font-size:.75rem;margin:.4rem 0 .6rem;white-space:normal}
@@ -106,11 +120,13 @@ th{color:var(--muted);font-weight:500}
 #toasts{position:fixed;right:14px;bottom:14px;display:flex;flex-direction:column;gap:.4rem;z-index:20}
 .toast{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--green);padding:.5rem .8rem;border-radius:3px;font-size:.85rem;min-width:220px;box-shadow:0 4px 16px rgba(0,0,0,.4)}
 .toast.err{border-left-color:var(--red)}
+#signedOutBanner{background:var(--red);color:var(--white);padding:.5rem .9rem;font-size:.9rem;text-align:center}
 kbd{border:1px solid var(--line);border-radius:3px;padding:0 .3rem;font-family:"IBM Plex Mono",monospace;font-size:.72rem;color:var(--ink)}
 @media print{body{display:block;height:auto;overflow:visible;background:#fff;color:#000}header,#map,.tabs,.filters,.actions,.hint,#toasts,.inv{display:none!important}aside{border:0}.pane{display:none}.pane#pane-investigations{display:block}.report{border:1px solid #999;background:#fff}.report .tag,.badge{color:#333;border-color:#999}}
 </style>
 </head>
 <body>
+<div id="signedOutBanner" role="status" hidden>Your session has expired. Reload the page to sign in again; live updates are paused until you do.</div>
 <header>
   <h1>Argus</h1>
   <span class="status">
@@ -144,10 +160,12 @@ kbd{border:1px solid var(--line);border-radius:3px;padding:0 .3rem;font-family:"
 
   <div class="pane active" id="pane-alerts">
     <div class="filters">
-      <span class="chip high on" data-sev="high">high</span><span class="chip medium on" data-sev="medium">medium</span><span class="chip on" data-sev="low">low</span>
+      <button type="button" class="chip high on" data-sev="high" aria-pressed="true">high</button><button type="button" class="chip medium on" data-sev="medium" aria-pressed="true">medium</button><button type="button" class="chip on" data-sev="low" aria-pressed="true">low</button>
       <label><input type="checkbox" id="fHideReviewed"> hide reviewed</label>
-      <select id="fSort"><option value="newest">newest</option><option value="severity">severity</option><option value="score">score</option><option value="vessel">vessel</option></select>
-      <input type="text" id="fSearch" placeholder="vessel, kind..." size="12">
+      <select id="fSort" aria-label="Sort alerts"><option value="newest">newest</option><option value="severity">severity</option><option value="score">score</option><option value="vessel">vessel</option></select>
+      <select id="fKind" aria-label="Filter alerts by kind"><option value="">all kinds</option><option value="ais_gap">AIS gap</option><option value="mmsi_spoof">MMSI spoof</option><option value="loitering">loitering</option><option value="rendezvous">rendezvous</option><option value="zone_incursion">zone incursion</option></select>
+      <label><input type="checkbox" id="fArea"> this area only</label>
+      <input type="text" id="fSearch" placeholder="vessel, kind..." size="12" aria-label="Filter alerts by vessel, MMSI or kind">
     </div>
     <div class="hint"><kbd>j</kbd>/<kbd>k</kbd> select · <kbd>i</kbd> investigate · <kbd>t</kbd> track · <kbd>Shift+A</kbd> accept · <kbd>Shift+R</kbd> reject · <kbd>Esc</kbd> clear</div>
     <div id="alerts"><span class="empty">No alerts yet. Run a watch sweep or wait for the replay.</span></div>
@@ -165,25 +183,36 @@ kbd{border:1px solid var(--line);border-radius:3px;padding:0 .3rem;font-family:"
   </div>
 
   <div class="pane" id="pane-audit">
-    <div class="filters"><input type="text" id="auditSearch" placeholder="filter by vessel, actor, action" size="28"><button class="small" onclick="loadAudit()">Refresh</button></div>
+    <div class="filters"><input type="text" id="auditSearch" placeholder="filter by vessel, actor, action" size="28" aria-label="Filter the last 200 audit events"><button class="small" onclick="loadAudit()">Refresh</button></div>
     <div id="audit"><span class="empty">No events yet.</span></div>
   </div>
 </aside>
-<div id="toasts"></div>
+<div id="toasts" role="status" aria-live="polite"></div>
 
 <script>
 const API = '/api';
 const GAP_MINUTES = 20;          // a silence longer than this is drawn as a dashed gap on a track
 const STALE_MINUTES = 30;        // vessels not heard from for this long (scenario time) are dimmed
-const state = {vessels:{}, alerts:[], investigations:[], tasking:[], area:null, selected:null, track:null,
-               filters:{sev:new Set(['high','medium','low']), hideReviewed:false, sort:'newest', q:''},
-               lastStreamAt:0, latestTs:null, openInv:null, poll:null};
+const state = {vessels:{}, alerts:[], investigations:[], tasking:[], area:null, selected:null, selectedAlert:null, track:null, audit:[],
+               filters:{sev:new Set(['high','medium','low']), hideReviewed:false, sort:'newest', q:'', kind:'', areaOnly:false},
+               lastStreamAt:0, latestTs:null, openInv:null, poll:null, signedOut:false};
 
 // ---------- helpers ----------
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const hhmm = ts => ts ? String(ts).slice(11,16)+'Z' : '';
 const dmy = ts => ts ? String(ts).replace('T',' ').slice(0,16)+'Z' : '';
+// How long ago an alert was raised. `created_at` is a real server timestamp, unlike the
+// alert window, which follows the scenario clock in replay and would read as years old
+// against wall time (U6).
+const ago = ts => { if(!ts) return ''; const m = Math.round((Date.now() - Date.parse(ts))/60000);
+  if(!isFinite(m) || m < 0) return ''; if(m < 60) return `${m} min ago`;
+  const h = Math.round(m/60); return h < 48 ? `${h} h ago` : `${Math.round(h/24)} d ago`; };
+// A null score is not a zero score: "0%" is a claim, "--" is the absence of one (U12).
+const pct = v => Number.isFinite(v) ? `${(v*100).toFixed(0)}%` : '--';
+// An officer who has asked their system for less motion gets instant map moves (U9).
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)');
+const flyMs = ms => REDUCED.matches ? 0 : ms;
 function toast(msg, err){ const t=document.createElement('div'); t.className='toast'+(err?' err':''); t.textContent=msg; $('toasts').appendChild(t); setTimeout(()=>t.remove(), err?6000:3000); }
 async function get(path){ const r = await fetch(API+path); if(!r.ok) throw new Error(`${path} ${r.status}`); return r.json(); }
 async function post(path, body){
@@ -256,6 +285,13 @@ map.on('style.load', () => {
   map.addLayer({id:'track-points',type:'circle',source:'track',filter:['==',['get','kind'],'point'],paint:{'circle-radius':3,'circle-color':'#E8A33D','circle-opacity':.8}});
   map.addLayer({id:'track-ends',type:'symbol',source:'track',filter:['==',['get','kind'],'end'],layout:{'text-field':['get','label'],'text-size':11,'text-font':['Open Sans Regular'],'text-offset':[0,1.4],'text-anchor':'top'},paint:{'text-color':'#E8A33D','text-halo-color':'#0F1B2B','text-halo-width':1.5}});
   map.addLayer({id:'track-ends-dot',type:'circle',source:'track',filter:['==',['get','kind'],'end'],paint:{'circle-radius':5,'circle-color':'#0F1B2B','circle-stroke-color':'#E8A33D','circle-stroke-width':2}});
+  // Proposed collection areas. A2 was a live run proposing a SAR collection over New
+  // York for a vessel off Singapore; drawing the box is the officer's only visual check
+  // that it is near the vessel before approving it (U10).
+  map.addSource('aoi',{type:'geojson',data:EMPTY});
+  map.addLayer({id:'aoi-fill',type:'fill',source:'aoi',paint:{'fill-color':'#5FB88A','fill-opacity':0.10}});
+  map.addLayer({id:'aoi-line',type:'line',source:'aoi',paint:{'line-color':'#5FB88A','line-width':1.4,'line-dasharray':[2,2]}});
+  map.addLayer({id:'aoi-label',type:'symbol',source:'aoi',layout:{'text-field':['get','label'],'text-size':11,'text-font':['Open Sans Regular'],'text-anchor':'top','text-offset':[0,0.6]},paint:{'text-color':'#5FB88A','text-halo-color':'#0F1B2B','text-halo-width':1.5}});
   map.addSource('vessels',{type:'geojson',data:EMPTY});
   map.addLayer({id:'vessel-ring',type:'circle',source:'vessels',filter:['all',['==',['geometry-type'],'Point'],['==',['get','investigating'],true]],paint:{'circle-radius':13,'circle-color':'transparent','circle-stroke-color':'#E0604F','circle-stroke-width':2}});
   map.addLayer({id:'vessel-select',type:'circle',source:'vessels',filter:['all',['==',['geometry-type'],'Point'],['==',['get','selected'],true]],paint:{'circle-radius':11,'circle-color':'rgba(90,200,216,.18)','circle-stroke-color':'#fff','circle-stroke-width':1.5}});
@@ -300,7 +336,7 @@ function fitAreas(animate=true){
   const list = areaFilter() ? [areaFilter()] : areas(); if(!mapReady || !list.length) return;
   const lons = list.flatMap(a => [a.bbox.min_lon, a.bbox.max_lon]), lats = list.flatMap(a => [a.bbox.min_lat, a.bbox.max_lat]);
   // The first fit jumps: an animated fit at start-up is cut short by the basemap merge that follows the first idle frame.
-  map.fitBounds([[Math.min(...lons),Math.min(...lats)],[Math.max(...lons),Math.max(...lats)]], {padding:60, maxZoom:9, duration: animate ? 700 : 0});
+  map.fitBounds([[Math.min(...lons),Math.min(...lats)],[Math.max(...lons),Math.max(...lats)]], {padding:60, maxZoom:9, duration: animate ? flyMs(700) : 0});
 }
 const areaSel = $('areaSel');
 try { state.areaFilter = localStorage.getItem('argus.area') || ''; } catch (e) {}
@@ -313,10 +349,45 @@ function renderAreaSelect(){
   areaSel.innerHTML = opts.map(o => `<option value="${esc(o.value)}"${o.value===state.areaFilter?' selected':''}>${esc(o.text)}</option>`).join('');
 }
 
+// Which vessels are alerted and which are under investigation, as sets rebuilt only
+// when those lists change. This used to be two `Array.some` scans per vessel inside the
+// render loop, so drawing was O(vessels x (alerts + investigations)); with 900 live
+// vessels and a busy alert list that ran on every position event and saturated the
+// main thread (U3).
+const marked = {alerted: new Set(), investigating: new Set()};
+// The alert and investigation lists redraw every eight seconds. An officer reading an
+// evidence panel had it collapse under them each time, which is why the panel was
+// worth opening in the first place (U4). Open panels are remembered by alert id and
+// restored after the redraw.
+const openPanels = new Set();
+function rememberPanels(root){
+  root.querySelectorAll('details[data-panel]').forEach(d => {
+    d.addEventListener('toggle', () => {
+      d.open ? openPanels.add(d.dataset.panel) : openPanels.delete(d.dataset.panel);
+    });
+    if(openPanels.has(d.dataset.panel)) d.open = true;
+  });
+}
+function refreshMarked(){
+  marked.alerted = new Set(state.alerts.filter(a => a.status==='open' && a.review_state!=='rejected').map(a => a.mmsi));
+  marked.investigating = new Set(state.investigations.filter(i => i.status==='running').map(i => i.mmsi));
+}
 function vesselState(mmsi){
-  const investigating = state.investigations.some(i => i.mmsi===mmsi && i.status==='running');
-  const alerted = state.alerts.some(a => a.mmsi===mmsi && a.status==='open' && a.review_state!=='rejected');
-  return {investigating, color: alerted ? '#E8A33D' : '#5AC8D8', selected: state.selected===mmsi};
+  return {
+    investigating: marked.investigating.has(mmsi),
+    color: marked.alerted.has(mmsi) ? '#E8A33D' : '#5AC8D8',
+    selected: state.selected===mmsi,
+  };
+}
+
+// Positions arrive faster than a screen refreshes. Coalesce them into one draw per
+// frame: the map cannot show more than that, and rebuilding the whole GeoJSON per
+// message is what made the page unresponsive rather than merely busy.
+let drawPending = false;
+function scheduleVessels(){
+  if(drawPending) return;
+  drawPending = true;
+  requestAnimationFrame(() => { drawPending = false; renderVessels(); });
 }
 function renderVessels(){
   if(!mapReady) return;
@@ -325,7 +396,10 @@ function renderVessels(){
   const streaming = state.lastStreamAt && (Date.now() - state.lastStreamAt) < 30000;
   const features = [];
   const only = areaFilter();
-  Object.values(state.vessels).filter(v => v.lon != null && (!replay || !streaming || v.live) && (!only || inArea(v, only))).forEach(v => {
+  // The area filter narrows the routine picture, but alerts are global: selecting an
+  // alert outside the filtered area used to fly the map to empty water (U7).
+  const keep = v => v.mmsi === state.selected || marked.alerted.has(v.mmsi) || marked.investigating.has(v.mmsi);
+  Object.values(state.vessels).filter(v => v.lon != null && (!replay || !streaming || v.live) && (!only || inArea(v, only) || keep(v))).forEach(v => {
     const s=vesselState(v.mmsi); const stale = latest && v.ts ? (latest - Date.parse(v.ts)) > STALE_MINUTES*60000 : false; const props={...v, ...s, stale};
     features.push({type:'Feature',geometry:{type:'Point',coordinates:[v.lon,v.lat]},properties:props});
     if(v.cog != null && (v.sog||0) > 0.5){ const nm = 0.6 * Math.min(v.sog, 25); const dLat = nm/60 * Math.cos(v.cog*Math.PI/180); const dLon = nm/60 * Math.sin(v.cog*Math.PI/180) / Math.cos(v.lat*Math.PI/180); features.push({type:'Feature',geometry:{type:'LineString',coordinates:[[v.lon,v.lat],[v.lon+dLon,v.lat+dLat]]},properties:{color:s.color, stale}}); }
@@ -336,12 +410,21 @@ function renderVessels(){
 async function loadVessels(){ try { (await get('/vessels')).forEach(v=>{ state.vessels[v.mmsi]={...v, ...(state.vessels[v.mmsi]||{})}; if(!state.latestTs || v.ts>state.latestTs) state.latestTs=v.ts; }); renderVessels(); renderAlerts(); } catch(e){ quiet('vessels unavailable: '+e.message); } }
 
 // ---------- selection ----------
-function selectVessel(mmsi, {fly=true}={}){
-  state.selected = mmsi; renderVessels();
-  const v = state.vessels[mmsi]; if(fly && v && mapReady) map.flyTo({center:[v.lon,v.lat], zoom:Math.max(map.getZoom(), 8.5), duration:600});
-  document.querySelectorAll('.alert').forEach(el => el.classList.toggle('selected', Number(el.dataset.mmsi)===mmsi));
-  const first = document.querySelector(`.alert[data-mmsi="${mmsi}"]`); if(first) first.scrollIntoView({block:'nearest'});
+// A vessel can have several open alerts (a gap and a rendezvous, say). Selection is
+// therefore by alert id, with the vessel kept for the map: keying off the vessel alone
+// meant Shift+A accepted whichever card happened to be first, not the highlighted one.
+function selectVessel(mmsi, {fly=true, alertId=null}={}){
+  state.selected = mmsi;
+  const rows = visibleAlerts().filter(a => a.mmsi === mmsi);
+  state.selectedAlert = alertId || (rows.length === 1 ? rows[0].id : (rows.some(a=>a.id===state.selectedAlert) ? state.selectedAlert : (rows[0]||{}).id || null));
+  renderVessels();
+  const v = state.vessels[mmsi]; if(fly && v && mapReady) map.flyTo({center:[v.lon,v.lat], zoom:Math.max(map.getZoom(), 8.5), duration:flyMs(600)});
+  document.querySelectorAll('.alert').forEach(el => el.classList.toggle('selected', el.dataset.id === state.selectedAlert));
+  const card = document.querySelector(`.alert[data-id="${state.selectedAlert}"]`) || document.querySelector(`.alert[data-mmsi="${mmsi}"]`);
+  if(card) card.scrollIntoView({block:'nearest'});
 }
+function selectAlert(id, mmsi){ selectVessel(mmsi, {alertId:id}); }
+function selectedAlertRow(rows){ return rows.find(a => a.id === state.selectedAlert) || null; }
 
 // ---------- track ----------
 async function toggleTrack(mmsi){ if(state.track && state.track.mmsi===mmsi){ clearTrack(); return; } await showTrack(mmsi); }
@@ -364,27 +447,68 @@ function drawTrack(t){
   f.push({type:'Feature',properties:{kind:'end',label:'latest '+hhmm(e.ts)},geometry:{type:'Point',coordinates:[e.lon,e.lat]}});
   map.getSource('track').setData({type:'FeatureCollection',features:f});
   const lons=t.pts.map(p=>p.lon), lats=t.pts.map(p=>p.lat);
-  map.fitBounds([[Math.min(...lons),Math.min(...lats)],[Math.max(...lons),Math.max(...lats)]], {padding:80, maxZoom:10, duration:700});
+  map.fitBounds([[Math.min(...lons),Math.min(...lats)],[Math.max(...lons),Math.max(...lats)]], {padding:80, maxZoom:10, duration:flyMs(700)});
   $('trackName').textContent = vesselName(t.mmsi); $('trackSpan').textContent = `${dmy(s.ts)} to ${hhmm(e.ts)} · ${t.pts.length} reports${gaps?` · ${gaps} silent period${gaps>1?'s':''}`:''}`; $('trackBox').classList.add('on');
   document.querySelectorAll('button[data-track]').forEach(b => b.classList.toggle('on', Number(b.dataset.track)===t.mmsi));
 }
 function clearTrack(){ state.track=null; if(mapReady) map.getSource('track').setData(EMPTY); $('trackBox').classList.remove('on'); document.querySelectorAll('button[data-track]').forEach(b=>b.classList.remove('on')); }
 
 // ---------- live stream + feed status ----------
+// EventSource only retries by itself after a clean drop. An expired sign-in or a
+// service rollout closes the connection for good (the balancer answers the reconnect
+// with a redirect to the sign-in page, which is not an event stream), so the header
+// said "retrying" forever while nothing was retried and progress silently stopped.
+// Every stream is therefore owned by a supervisor that reopens it with backoff, and
+// a session that has actually expired asks the officer to reload rather than spin.
+const STREAM_BACKOFF_MS = [1000, 2000, 5000, 10000, 30000];
+function signedOut(){
+  if(state.signedOut) return; state.signedOut = true;
+  $('feedDot').className = 'dot stalled';
+  $('feedAge').textContent = 'signed out, reload to sign in again';
+  const b = $('signedOutBanner'); if(b) b.hidden = false;
+}
+async function sessionAlive(){
+  // /whoami is cheap and behind the same sign-in, so its status distinguishes an
+  // expired session from a service that is merely restarting.
+  try { const r = await fetch(API+'/whoami', {credentials:'same-origin'}); return r.status !== 401 && r.status !== 403; }
+  catch(e){ return true; }
+}
+function openStream(path, handlers){
+  let attempt = 0, source = null, stopped = false;
+  const connect = () => {
+    if(stopped) return;
+    source = new EventSource(API+path);
+    source.onopen = () => { attempt = 0; state.signedOut = false; const b=$('signedOutBanner'); if(b) b.hidden = true; };
+    for(const [name, fn] of Object.entries(handlers)) source.addEventListener(name, fn);
+    source.onerror = async () => {
+      source.close();
+      if(stopped) return;
+      if(path === '/stream'){ $('feedDot').className='dot stalled'; }
+      if(!(await sessionAlive())){ signedOut(); return; }
+      const wait = STREAM_BACKOFF_MS[Math.min(attempt, STREAM_BACKOFF_MS.length-1)];
+      attempt += 1;
+      if(path === '/stream') $('feedAge').textContent = `stream disconnected, reconnecting in ${Math.round(wait/1000)}s`;
+      setTimeout(connect, wait);
+    };
+  };
+  connect();
+  return () => { stopped = true; if(source) source.close(); };
+}
 function startStream(){
-  const es = new EventSource(API+'/stream');
-  es.addEventListener('position', e => { const p=JSON.parse(e.data); state.lastStreamAt=Date.now(); if(p.event){ if(p.event==='replay_complete') toast('Replay complete: the scenario has reached its end.'); return; } const v=state.vessels[p.mmsi]||{mmsi:p.mmsi,name:String(p.mmsi)}; Object.assign(v,p,{live:true}); state.vessels[p.mmsi]=v; if(!state.latestTs || p.ts>state.latestTs || state.area?.mode==='replay') state.latestTs=p.ts; $('clock').textContent = dmy(p.ts); renderVessels(); });
-  es.addEventListener('ping', () => { state.lastStreamAt = state.lastStreamAt || Date.now(); });
-  es.onerror = () => { $('feedDot').className='dot stalled'; $('feedAge').textContent='stream disconnected, retrying'; };
+  openStream('/stream', {
+    position: e => { const p=JSON.parse(e.data); state.lastStreamAt=Date.now(); if(p.event){ if(p.event==='replay_complete') toast('Replay complete: the scenario has reached its end.'); return; } const v=state.vessels[p.mmsi]||{mmsi:p.mmsi,name:String(p.mmsi)}; Object.assign(v,p,{live:true}); state.vessels[p.mmsi]=v; if(!state.latestTs || p.ts>state.latestTs || state.area?.mode==='replay') state.latestTs=p.ts; $('clock').textContent = dmy(p.ts); scheduleVessels(); },
+    ping: () => { state.lastStreamAt = state.lastStreamAt || Date.now(); },
+  });
   // Job progress: refresh the open investigation on every event about it; toast terminal states.
-  const ev = new EventSource(API+'/events');
-  ev.addEventListener('job', e => {
+  openStream('/events', {
+    job: e => {
     const j = JSON.parse(e.data);
-    if(j.investigation_id && j.investigation_id === state.openInv){ get(`/investigations/${j.investigation_id}`).then(renderInvestigation).catch(()=>{}); }
+    if(j.investigation_id && j.investigation_id === state.openInv){ refreshInvestigation(j.investigation_id); }
     if(j.step==='job' && j.status==='succeeded'){ toast(j.kind==='sweep' ? 'Sweep finished' : `Report ready for ${vesselName(j.mmsi)}`); loadAlerts(); loadInvestigations(); loadTasking(); }
     if(j.step==='job' && (j.status==='failed' || j.status==='dead')){ toast(`${j.kind} failed: ${j.detail||''}`, true); loadInvestigations(); }
     if(j.step==='job' && j.status==='retrying'){ toast(`${j.kind}: ${j.detail||'retrying'}`, true); }
     if(j.kind==='investigation' && j.step==='job' && j.status==='queued' && j.investigation_id && !state.openInv){ loadInvestigations(); }
+    },
   });
 }
 async function loadArea(){ try { state.area = await get('/area'); renderAreaSelect(); renderArea(); renderVessels(); if(!state.fitted && mapReady){ state.fitted = true; fitAreas(false); } } catch(e){ renderAreaSelect(); } }
@@ -397,19 +521,31 @@ function feedTick(){
   else { $('feedDot').className='dot stalled'; $('feedAge').textContent = `no reports for ${Math.round(age)} s`; }
 }
 setInterval(feedTick, 1000);
+// MapLibre sizes its canvas once; the stacked layout needs it told (U8).
+matchMedia('(max-width:750px)').addEventListener('change', () => { if(mapReady) map.resize(); });
 
 // ---------- alerts ----------
-document.querySelectorAll('.chip[data-sev]').forEach(c => c.onclick = () => { c.classList.toggle('on'); c.classList.contains('on') ? state.filters.sev.add(c.dataset.sev) : state.filters.sev.delete(c.dataset.sev); renderAlerts(); });
+document.querySelectorAll('.chip[data-sev]').forEach(c => c.onclick = () => { c.classList.toggle('on'); const on = c.classList.contains('on'); c.setAttribute('aria-pressed', String(on)); on ? state.filters.sev.add(c.dataset.sev) : state.filters.sev.delete(c.dataset.sev); renderAlerts(); });
 $('fHideReviewed').onchange = e => { state.filters.hideReviewed = e.target.checked; renderAlerts(); };
 $('fSort').onchange = e => { state.filters.sort = e.target.value; renderAlerts(); };
 $('fSearch').oninput = e => { state.filters.q = e.target.value.trim().toLowerCase(); renderAlerts(); };
+$('fKind').onchange = e => { state.filters.kind = e.target.value; renderAlerts(); };
+$('fArea').onchange = e => { state.filters.areaOnly = e.target.checked; renderAlerts(); };
 const SEV = {high:0, medium:1, low:2};
 function visibleAlerts(){
   const f = state.filters;
-  let rows = state.alerts.filter(a => a.status!=='dismissed' && f.sev.has(a.severity) && (!f.hideReviewed || a.review_state==='draft'));
+  // Filtering is what makes a long queue workable: one day of live sweeps left 131
+  // alerts awaiting review (U10). All client-side, because every row already carries
+  // the kind and the vessel's position is in state.
+  const only = f.areaOnly ? areaFilter() : null;
+  let rows = state.alerts.filter(a => a.status!=='dismissed' && f.sev.has(a.severity)
+    && (!f.hideReviewed || a.review_state==='draft')
+    && (!f.kind || a.kind===f.kind)
+    && (!only || inArea(state.vessels[a.mmsi] || {}, only)));
   if(f.q) rows = rows.filter(a => (vesselName(a.mmsi)+' '+a.mmsi+' '+a.kind+' '+(a.details?.rationale||'')).toLowerCase().includes(f.q));
   const s = f.sort;
-  rows.sort((a,b) => s==='severity' ? (SEV[a.severity]-SEV[b.severity]) || (b.score-a.score) : s==='score' ? b.score-a.score : s==='vessel' ? vesselName(a.mmsi).localeCompare(vesselName(b.mmsi)) : (b.created_at||'').localeCompare(a.created_at||''));
+  const score = a => Number.isFinite(a.score) ? a.score : -1;
+  rows.sort((a,b) => s==='severity' ? (SEV[a.severity]-SEV[b.severity]) || (score(b)-score(a)) : s==='score' ? score(b)-score(a) : s==='vessel' ? vesselName(a.mmsi).localeCompare(vesselName(b.mmsi)) : (b.created_at||'').localeCompare(a.created_at||''));
   return rows;
 }
 function renderAlerts(){
@@ -417,21 +553,67 @@ function renderAlerts(){
   const drafts = state.alerts.filter(a=>a.status!=='dismissed' && a.review_state==='draft');
   const n = $('nAlerts'); n.textContent = drafts.length; n.className = 'n' + (drafts.some(a=>a.severity==='high') ? ' high' : '');
   $('alerts').innerHTML = rows.length ? rows.map(a=>`
-    <div class="alert ${esc(a.severity)}${state.selected===a.mmsi?' selected':''}" data-id="${a.id}" data-mmsi="${a.mmsi}" onclick="selectVessel(${a.mmsi})">
-      <div class="row"><span class="kind">${esc(a.kind.replace('_',' '))} · ${esc(vesselName(a.mmsi))}${reviewBadge(a)}</span><span class="meta">${esc(a.severity)} · ${(a.score*100).toFixed(0)}%</span></div>
-      <div class="meta">${hhmm(a.started_at)} to ${hhmm(a.ended_at)} · ${esc(a.status)} · raised by ${esc(a.created_by)}</div>
+    <div class="alert ${esc(a.severity)}${state.selectedAlert===a.id?' selected':''}" data-id="${esc(a.id)}" data-mmsi="${a.mmsi}" data-kind="${esc(a.kind)}" role="button" tabindex="0" aria-pressed="${state.selectedAlert===a.id}" aria-label="${esc(a.kind.replace('_',' '))} alert for ${esc(vesselName(a.mmsi))}, ${esc(a.severity)} severity">
+      <div class="row"><span class="kind">${esc(a.kind.replace('_',' '))} · ${esc(vesselName(a.mmsi))}${reviewBadge(a)}</span><span class="meta">${esc(a.severity)} · ${pct(a.score)}</span></div>
+      <div class="meta">${dmy(a.started_at)} to ${hhmm(a.ended_at)} · ${esc(a.status)} · raised by ${esc(a.created_by)}${a.created_at?` · <span title="${esc(a.created_at)}">raised ${ago(a.created_at)}</span>`:''}</div>
       <p>${esc(a.details?.rationale||'')}</p>
-      ${(a.details?.evidence||[]).length?`<details><summary>evidence (${a.details.evidence.length})</summary><ul>${a.details.evidence.map(e=>`<li><b>${esc(e.source)}</b> ${esc(e.summary)}${e.reference?` <span class="mono">[${esc(e.reference)}]</span>`:''}</li>`).join('')}</ul></details>`:''}
-      <div class="actions" onclick="event.stopPropagation()">
-        <button onclick="investigate(${a.mmsi},'${a.id}','${esc(a.kind)}')">Investigate</button>
-        <button data-track="${a.mmsi}" class="${state.track?.mmsi===a.mmsi?'on':''}" onclick="toggleTrack(${a.mmsi})">Track</button>
-        ${a.review_state==='draft'?`<button onclick="reviewAlert('${a.id}','accepted')">Accept</button><button onclick="reviewAlert('${a.id}','rejected')">Reject</button>`:''}
+      ${(a.details?.evidence||[]).length?`<details data-panel="alert-${a.id}"><summary>evidence (${a.details.evidence.length})</summary><ul>${a.details.evidence.map(e=>`<li><b>${esc(e.source)}</b> ${esc(e.summary)}${e.reference?` <span class="mono">[${esc(e.reference)}]</span>`:''}</li>`).join('')}</ul></details>`:''}
+      <div class="actions">
+        <button data-act="investigate">Investigate</button>
+        <button data-act="track" data-track="${a.mmsi}" class="${state.track?.mmsi===a.mmsi?'on':''}">Track</button>
+        ${a.review_state==='draft'?`<button data-act="accept">Accept</button><button data-act="reject">Reject</button>`:''}
       </div>
     </div>`).join('') : `<span class="empty">${state.alerts.length ? 'No alerts match the filters.' : 'No alerts yet. Run a watch sweep or wait for the replay.'}</span>`;
+  rememberPanels($('alerts'));
 }
+// Ids reach the DOM as data attributes and one delegated listener reads them, instead
+// of being interpolated into `onclick` strings and parsed as JavaScript. Safe today
+// because ids are server-generated UUIDs, fragile the moment one is not (U11). The
+// keyboard half also gives the cards a place in the tab order (U9).
+function alertAction(card, act){
+  const id = card.dataset.id, mmsi = Number(card.dataset.mmsi);
+  if(!act){ selectAlert(id, mmsi); return; }
+  if(act==='investigate') investigate(mmsi, id, card.dataset.kind);
+  else if(act==='track') toggleTrack(mmsi);
+  else if(act==='accept') reviewAlert(id, 'accepted');
+  else if(act==='reject') rejectAlert(id);
+}
+// Why a draft was rejected is the most useful thing in the audit trail, and the API has
+// always accepted a note the UI never sent (U10). Cancelling cancels the review. Both
+// the button and Shift+R come through here, so the two paths cannot diverge.
+function rejectAlert(id){
+  const note = prompt('Why is this alert being rejected? (optional)');
+  if(note !== null) reviewAlert(id, 'rejected', note.trim() || undefined);
+}
+$('alerts').addEventListener('click', e => {
+  const card = e.target.closest('.alert'); if(!card) return;
+  alertAction(card, e.target.closest('button')?.dataset.act);
+});
+$('investigation').addEventListener('click', e => {
+  const box = e.target.closest('.actions[data-inv]'); if(!box) return;
+  const act = e.target.closest('button')?.dataset.act, id = box.dataset.inv;
+  if(act==='accept') reviewInvestigation(id, 'accepted');
+  else if(act==='reject') reviewInvestigation(id, 'rejected');
+  else if(act==='track') toggleTrack(Number(box.dataset.mmsi));
+  else if(act==='copy') copyLink(id);
+  else if(act==='export') exportReport(id);
+  else if(act==='print') window.print();
+  else if(act==='close') closeInvestigation();
+});
+$('tasking').addEventListener('click', e => {
+  const box = e.target.closest('.actions[data-task]'); if(!box) return;
+  const act = e.target.closest('button')?.dataset.act;
+  if(act==='approve' || act==='reject') decide(box.dataset.task, act);
+});
+$('alerts').addEventListener('keydown', e => {
+  if(e.key !== 'Enter' && e.key !== ' ') return;
+  const card = e.target.closest('.alert');
+  if(card && e.target === card){ e.preventDefault(); alertAction(card, null); }
+});
+
 function quiet(msg){ console.warn(msg); }
-async function loadAlerts(){ try { state.alerts = await get('/alerts'); renderAlerts(); renderVessels(); } catch(e){ quiet('alerts unavailable: '+e.message); } }
-async function reviewAlert(id, decision){ if(!requireOfficer()) return; try { await post(`/alerts/${id}/review`, {decision}); toast(`Alert ${decision} by ${officer()}`); await loadAlerts(); } catch(e){ toast('Review failed: '+e.message, true); } }
+async function loadAlerts(){ try { state.alerts = await get('/alerts'); refreshMarked(); renderAlerts(); renderVessels(); } catch(e){ quiet('alerts unavailable: '+e.message); } }
+async function reviewAlert(id, decision, note){ if(!requireOfficer()) return; try { await post(`/alerts/${id}/review`, note ? {decision, note} : {decision}); toast(`Alert ${decision} by ${officer()}`); await loadAlerts(); } catch(e){ toast('Review failed: '+e.message, true); await loadAlerts(); } }
 $('sweep').onclick = async () => { if(!requireOfficer()) return; try { await post('/sweep?hours=12'); toast('Sweep requested. Alerts appear as the Watch agent raises them.'); } catch(e){ toast('Sweep failed: '+e.message, true); } };
 
 // keyboard: j/k move, i investigate, t track, Shift+A / Shift+R review (a modifier so stray typing
@@ -440,17 +622,17 @@ document.addEventListener('keydown', e => {
   if(['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)) return;
   if(e.metaKey || e.ctrlKey || e.altKey) return;
   if(!document.getElementById('pane-alerts').classList.contains('active') && e.key!=='Escape') return;
-  const rows = visibleAlerts(); if(e.key==='Escape'){ clearTrack(); state.selected=null; renderVessels(); renderAlerts(); return; }
+  const rows = visibleAlerts(); if(e.key==='Escape'){ clearTrack(); state.selected=null; state.selectedAlert=null; renderVessels(); renderAlerts(); return; }
   if(!rows.length) return;
-  let idx = rows.findIndex(a => a.mmsi===state.selected);
-  if(e.key==='j'){ selectVessel(rows[Math.min(idx+1, rows.length-1)].mmsi); }
-  else if(e.key==='k'){ selectVessel(rows[Math.max(idx-1, 0)].mmsi); }
-  else if(idx>=0){ const a=rows[idx]; if(e.key==='A'&&e.shiftKey&&a.review_state==='draft') reviewAlert(a.id,'accepted'); else if(e.key==='R'&&e.shiftKey&&a.review_state==='draft') reviewAlert(a.id,'rejected'); else if(e.key==='i') investigate(a.mmsi,a.id,a.kind); else if(e.key==='t') toggleTrack(a.mmsi); }
+  const idx = rows.findIndex(a => a.id===state.selectedAlert);
+  if(e.key==='j'){ const n=rows[idx<0?0:Math.min(idx+1, rows.length-1)]; selectAlert(n.id, n.mmsi); }
+  else if(e.key==='k'){ const n=rows[idx<0?0:Math.max(idx-1, 0)]; selectAlert(n.id, n.mmsi); }
+  else if(idx>=0){ const a=rows[idx]; if(e.key==='A'&&e.shiftKey&&a.review_state==='draft') reviewAlert(a.id,'accepted'); else if(e.key==='R'&&e.shiftKey&&a.review_state==='draft') rejectAlert(a.id); else if(e.key==='i') investigate(a.mmsi,a.id,a.kind); else if(e.key==='t') toggleTrack(a.mmsi); }
 });
 
 // ---------- investigations ----------
 async function loadInvestigations(){
-  try { state.investigations = await get('/investigations'); } catch(e){ quiet('investigations unavailable: '+e.message); return; }
+  try { state.investigations = await get('/investigations'); refreshMarked(); } catch(e){ quiet('investigations unavailable: '+e.message); return; }
   $('nInv').textContent = state.investigations.filter(i=>i.status==='running' || (i.status==='complete' && i.review_state==='draft')).length;
   $('invList').innerHTML = state.investigations.length ? state.investigations.map(i=>`
     <div class="inv${state.openInv===i.id?' selected':''}" onclick="openInvestigation('${i.id}')">
@@ -488,13 +670,13 @@ function renderInvestigation(inv){
     <details id="snapshots"><summary>Evidence snapshots (captured at completion)</summary><div id="snapshotList" class="meta">loading...</div></details>
     <details><summary>Ownership network</summary><div id="netSummary" class="meta">loading...</div></details>
     ${inv.manifest && inv.manifest.nodes ? `<details><summary>Provenance</summary><div class="meta">code ${esc(inv.manifest.code_revision||'?')} · schema ${esc(inv.manifest.schema_version||'?')} · MCP ${esc(Object.entries(inv.manifest.mcp_servers||{}).map(([k,v])=>k+' '+v).join(', '))}<ul>${(inv.manifest.nodes||[]).map(n=>`<li><b>${esc(n.node)}</b> ${esc(n.model_id||'')} <span class="mono">${esc(n.tier||'')}</span>${n.attempts>1?` · ${n.attempts} attempts`:''}${(n.policy_problems||[]).length?` · <span style="color:var(--red)">policy: ${esc(n.policy_problems.join('; '))}</span>`:''}</li>`).join('')}</ul></div></details>` : ''}
-    <div class="actions">
-      ${inv.review_state==='draft'?`<span id="invActions"><button onclick="reviewInvestigation('${inv.id}','accepted')">Accept report</button> <button onclick="reviewInvestigation('${inv.id}','rejected')">Reject report</button></span>`:''}
-      <button class="small" onclick="toggleTrack(${inv.mmsi})">Track vessel</button>
-      <button class="small" onclick="copyLink('${inv.id}')">Copy link</button>
-      <button class="small" onclick="exportReport('${inv.id}')">Export JSON</button>
-      <button class="small" onclick="window.print()">Print / PDF</button>
-      <button class="small" onclick="closeInvestigation()">Close</button>
+    <div class="actions" data-inv="${esc(inv.id)}" data-mmsi="${inv.mmsi}">
+      ${inv.review_state==='draft'?`<span id="invActions"><button data-act="accept">Accept report</button> <button data-act="reject">Reject report</button></span>`:''}
+      <button class="small" data-act="track">Track vessel</button>
+      <button class="small" data-act="copy">Copy link</button>
+      <button class="small" data-act="export">Export JSON</button>
+      <button class="small" data-act="print">Print / PDF</button>
+      <button class="small" data-act="close">Close</button>
     </div></div>`;
   el.scrollIntoView({block:'start'});
   loadSnapshots(inv); loadNetwork(inv.mmsi);
@@ -510,10 +692,36 @@ async function loadNetwork(mmsi){
   try { const n = await get(`/network/${mmsi}?depth=2`);
     if(!n.found){ box.textContent = 'Vessel is not in the ownership network.'; return; }
     const byId = Object.fromEntries(n.nodes.map(x=>[x.id,x]));
-    const rels = n.edges.map(e=>`<li>${esc(byId[e.src].name)} <span class="mono">${esc(e.rel)}</span> ${esc(byId[e.dst].name)}${e.source!=='registry'?` <span class="mono">[${esc(e.source)}]</span>`:''}</li>`).join('');
-    const listed = n.listed.map(l=>`<li style="color:var(--red)">listed: ${esc(l.name)} via ${l.path.map(esc).join(' → ')}</li>`).join('');
+    // An edge whose endpoint sits one hop beyond `depth` has no node in the result. The
+    // id is shown rather than the edge dropped: a missing relationship in an ownership
+    // graph is a wrong answer, not an incomplete one (U12).
+    const nodeName = id => byId[id]?.name || String(id);
+    const rels = n.edges.map(e=>`<li>${esc(nodeName(e.src))} <span class="mono">${esc(e.rel)}</span> ${esc(nodeName(e.dst))}${e.source!=='registry'?` <span class="mono">[${esc(e.source)}]</span>`:''}</li>`).join('');
+    const listed = (n.listed||[]).map(l=>`<li style="color:var(--red)">listed: ${esc(l.name)} via ${(l.path||[]).map(esc).join(' → ')}</li>`).join('');
     box.innerHTML = `<p>${n.nodes.length} entities, ${n.edges.length} relationships within 2 hops. People appear as pseudonyms here.</p><ul>${listed}${rels}</ul>`;
   } catch(e){ box.textContent = 'network unavailable'; }
+}
+// One refresh path for an open investigation. The event stream is the fast signal and
+// the timer is the fallback for when it is silent; both used to fetch and render
+// independently, so a completion repainted twice and yanked the officer's scroll. The
+// poll also had no error handling, so one 401 after a session expiry threw every four
+// seconds forever and never cleared its own interval (U5).
+let invRefreshing = false;
+async function refreshInvestigation(id){
+  if(invRefreshing || state.openInv !== id) return;
+  invRefreshing = true;
+  try {
+    const cur = await get(`/investigations/${id}`);
+    if(state.openInv !== id) return;
+    renderInvestigation(cur);
+    if(cur.status !== 'running'){
+      if(state.poll){ clearInterval(state.poll); state.poll = null; }
+      toast(cur.status==='complete' ? 'Report ready for review' : 'Investigation failed', cur.status!=='complete');
+      loadAlerts(); loadTasking(); loadInvestigations();
+    }
+  } catch(e){
+    quiet('investigation refresh failed: '+e.message);
+  } finally { invRefreshing = false; }
 }
 function closeInvestigation(){ state.openInv=null; if(state.poll){ clearInterval(state.poll); state.poll=null; } $('investigation').innerHTML=''; history.replaceState(null,'',location.pathname); loadInvestigations(); }
 async function openInvestigation(id, {silent=false}={}){
@@ -523,7 +731,7 @@ async function openInvestigation(id, {silent=false}={}){
   document.querySelectorAll('.inv').forEach(el => el.classList.remove('selected'));
   if(inv.mmsi) selectVessel(inv.mmsi);
   if(state.poll) clearInterval(state.poll);
-  if(inv.status==='running') state.poll = setInterval(async () => { const cur = await get(`/investigations/${id}`); renderInvestigation(cur); if(cur.status!=='running'){ clearInterval(state.poll); state.poll=null; toast(cur.status==='complete' ? 'Report ready for review' : 'Investigation failed', cur.status!=='complete'); loadAlerts(); loadTasking(); loadInvestigations(); } }, 4000);
+  if(inv.status==='running') state.poll = setInterval(() => refreshInvestigation(id), 4000);
   loadInvestigations();
   return inv;
 }
@@ -540,18 +748,34 @@ async function exportReport(id){ const inv = await get(`/investigations/${id}`);
 async function loadTasking(){
   try { state.tasking = await get('/tasking'); } catch(e){ quiet('tasking unavailable: '+e.message); return; }
   const rows = state.tasking; $('nTask').textContent = rows.filter(t=>t.status==='proposed').length;
-  $('tasking').innerHTML = rows.length ? rows.map(t=>`<div class="task"><b>${esc(t.sensor)}</b> · ${esc(vesselName(t.mmsi))} · <span class="badge ${t.status==='approved'?'accepted':t.status==='rejected'?'rejected':'draft'}">${esc(t.status)}</span> <span class="meta">${esc(t.priority)} · ${hhmm(t.window_start)} to ${hhmm(t.window_end)}</span><p class="meta">${esc(t.rationale)}</p>${t.status==='proposed'?`<div class="actions"><button onclick="decide('${t.id}','approve')">Approve</button><button onclick="decide('${t.id}','reject')">Reject</button></div>`:`<span class="meta">${esc(t.status)} by ${esc(t.decided_by||'?')} at ${dmy(t.decided_at)}</span>`}</div>`).join('') : '<span class="empty">None.</span>';
+  renderAois(rows);
+  $('tasking').innerHTML = rows.length ? rows.map(t=>`<div class="task"><b>${esc(t.sensor)}</b> · ${esc(vesselName(t.mmsi))} · <span class="badge ${t.status==='approved'?'accepted':t.status==='rejected'?'rejected':'draft'}">${esc(t.status)}</span> <span class="meta">${esc(t.priority)} · ${hhmm(t.window_start)} to ${hhmm(t.window_end)}</span><p class="meta">${esc(t.rationale)}</p>${t.status==='proposed'?`<div class="actions" data-task="${esc(t.id)}"><button data-act="approve">Approve</button><button data-act="reject">Reject</button></div>`:`<span class="meta">${esc(t.status)} by ${esc(t.decided_by||'?')} at ${dmy(t.decided_at)}</span>`}</div>`).join('') : '<span class="empty">None.</span>';
+}
+function renderAois(rows){
+  if(!mapReady) return;
+  const features = (rows||[]).filter(t => t.status==='proposed' && t.aoi).map(t => ({
+    type:'Feature', geometry:t.aoi,
+    properties:{label:`${t.sensor} · ${vesselName(t.mmsi)}`},
+  }));
+  map.getSource('aoi').setData({type:'FeatureCollection', features});
 }
 async function decide(id, d){ if(!requireOfficer()) return; try { await post(`/tasking/${id}/${d}`); toast(`Tasking ${d==='approve'?'approved':'rejected'} by ${officer()}`); loadTasking(); } catch(e){ toast('Decision failed: '+e.message, true); } }
 
 // ---------- audit ----------
 async function loadAudit(){
-  let rows; try { rows = await get('/audit?limit=200'); } catch(e){ quiet('audit unavailable: '+e.message); return; }
+  try { state.audit = await get('/audit?limit=200'); } catch(e){ quiet('audit unavailable: '+e.message); return; }
+  renderAudit();
+}
+// The filtering was always local; only the fetch was bound to `oninput`, so typing a
+// word issued one identical request per keystroke and the answers could land out of
+// order (U13). The alerts pane already had this shape.
+function renderAudit(){
+  let rows = state.audit;
   const q = $('auditSearch').value.trim().toLowerCase();
   if(q) rows = rows.filter(r => (r.actor+' '+r.action+' '+r.entity_kind+' '+(r.entity_id||'')+' '+JSON.stringify(r.details||{})+' '+vesselName(r.details?.mmsi||'')).toLowerCase().includes(q));
   $('audit').innerHTML = rows.length ? `<table><thead><tr><th>time</th><th>actor</th><th>action</th><th>entity</th></tr></thead><tbody>${rows.map(r=>`<tr><td class="mono">${dmy(r.ts)}</td><td>${esc(r.actor)}<br><span class="meta">${esc(r.actor_kind)}</span></td><td>${esc(r.action)}${r.details?.mmsi?`<br><span class="meta">${esc(vesselName(r.details.mmsi))}</span>`:''}${r.details?.decision?`<br><span class="meta">${esc(r.details.decision)}</span>`:''}</td><td>${r.entity_kind==='investigation'&&r.entity_id?`<a href="?investigation=${r.entity_id}" onclick="event.preventDefault();openInvestigation('${r.entity_id}')" style="color:var(--cyan)">${esc(r.entity_kind)}</a>`:esc(r.entity_kind)}<br><span class="meta mono">${esc((r.entity_id||'').slice(0,8))}</span></td></tr>`).join('')}</tbody></table>` : '<span class="empty">No events match.</span>';
 }
-$('auditSearch').oninput = loadAudit;
+$('auditSearch').oninput = renderAudit;
 
 // ---------- boot: data first, map layers when the basemap is ready ----------
 loadArea(); loadVessels(); loadAlerts(); loadInvestigations(); loadTasking(); loadAudit(); startStream();

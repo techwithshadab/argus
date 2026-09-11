@@ -1,0 +1,8 @@
+# The OpenTelemetry collector, vendored as a build asset rather than pulled from Docker
+# Hub at every task start (gap audit I18).
+#
+# Every service exports telemetry here and depends on this one by name, so a Docker Hub
+# rate limit or outage stopped the whole platform from starting, not just the collector.
+# The image now lands in the stack's own ECR repository at deploy time. The tag must stay
+# in lockstep with docker-compose.yml; a test pins that.
+FROM otel/opentelemetry-collector-contrib:0.128.0

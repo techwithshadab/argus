@@ -25,7 +25,7 @@ Prerequisites: credentials with admin on the target account (a deploy role, not 
 |---|---|---|
 | Deploy or update | `make deploy` | Bootstraps CDK, deploys 4 stacks, prints the UI URL. 30–40 min first time |
 | First officer account | `CDK_CONTEXT="-c officerEmail=officer@example.org" make deploy` | Cognito emails a temporary password; more officers with `aws cognito-idp admin-create-user --user-pool-id <OfficerPoolId> --username <email> --user-attributes Name=email,Value=<email> Name=email_verified,Value=true` |
-| Require MFA | `-c officerMfa=required` | TOTP enrolment at first sign-in; optional by default |
+| Require MFA | `-c officerMfa=required` | Enforces TOTP enrolment at the next sign-in. Optional by default so an existing officer without an authenticator is not locked out; turn it on once every officer has enrolled |
 | Restrict the UI | `CDK_CONTEXT="-c uiAllowedCidr=203.0.113.0/24 -c uiCertificateArn=arn:aws:acm:… -c uiDomain=watch.example.org" make deploy` | Optional: the watch floor already needs a sign-in. A certificate for your own domain (plus the domain, which becomes the sign-in callback) replaces the self-signed one (see [Signing in](#signing-in)) |
 | Evals against AWS | `make eval-aws` | Assumes `argus-operator` (output `OperatorRoleArn`), runs `evals/node_evals.py --gate --push` against `UiUrl/api` with a caller token |
 | Alerts by email | `CDK_CONTEXT="-c alertEmail=you@example.org" make deploy` | Confirm the SNS subscription email |
@@ -105,14 +105,19 @@ CloudWatch alarms (`infra/cdk/stacks/alarms.py`, output `AlarmCount`) watch the 
 | `argus-jobs-backlog`, `argus-sweeps-backlog` | More than 50 investigations or 3 sweeps waiting for 15 min | Worker concurrency (`WORKER_CONCURRENCY`); a sweep raising far more alerts than usual (`SWEEP_MAX_CANDIDATES`) |
 | `argus-jobs-dlq`, `argus-sweeps-dlq`, `argus-sweep-schedule-dlq` | A message was dead-lettered after four deliveries, or the scheduler could not enqueue a sweep | `GET /jobs?status=dead`, `jobs.error`; the scheduler DLQ means SQS or KMS denied the scheduler role |
 | `argus-public-alb-5xx`, `argus-internal-alb-5xx` | The load balancer itself answered 5xx (no healthy target, or a target timed out) | The matching `*-down` alarm; target health in the ECS console events of the service |
-| `argus-public-alb-target-5xx`, `argus-internal-alb-target-5xx` | The UI, API or Grafana returned 5xx | API logs (`/argus/platform`, stream `api`); Aurora reachable? |
+| `argus-public-alb-target-5xx`, `argus-internal-alb-target-5xx` | The UI, API or Grafana returned 5xx | API logs (`/argus/services`, stream `api`); Aurora reachable? |
 | `argus-api-down`, `argus-ui-down`, `argus-grafana-down` | No healthy target for three minutes | ECS service events: crash loop rolled back? image pull? Aurora secret? |
 | `argus-worker-down`, `argus-sweep-worker-down`, `argus-collector-down`, `argus-ais-replay-down` | No running task for five minutes (Container Insights) | Same as above; the collector task must exist before any other task starts (Service Connect names) |
 | `argus-aurora-cpu`, `argus-aurora-capacity`, `argus-aurora-local-storage` | CPU > 80% or ACUs > 90% of the maximum for 15 min; local storage under 2 GiB | Slow queries on `positions` (partitions present?); raise `serverless_v2_max_capacity` in `data_stack.py` |
 | `argus-degraded-branches` | More than two Investigator branches degraded in an hour (`Argus/Investigations`, published by the API on completion) | The manifest's `nodes` with `degraded`; Bedrock throttling (`escalated_to` in the same manifest means the tier escalation ran); a tool server down |
 | `argus-waf-blocked` | The web ACL blocked more than 100 requests in five minutes | `aws wafv2 get-sampled-requests --web-acl-arn ... --rule-metric-name ALL --scope REGIONAL --time-window ...`: an attack, or a managed rule matching legitimate officer traffic (count that rule before disabling it) |
 | `argus-nat-<n>-port-allocation`, `argus-nat-<n>-packets-dropped` | The NAT gateway could not allocate a source port or dropped packets | A feed client leaking connections (`aisstream`, OpenSanctions); with `-c natPerAz=true` each zone has its own gateway |
-| `argus-eval-<suite>` | The latest `evals/node_evals.py --push` run of a suite missed a floor in `evals/thresholds.yaml` | Compare the failing run's `code_revision` and prompt hashes with the last passing one; do not promote the change |
+| `argus-feed-stalled` | No AIS position stored for fifteen minutes, or the ingest task stopped publishing its heartbeat (`Argus/Feed` `LastPositionAge`, missing data breaches) | The ingest task's logs for `AISStream stream ended` in a loop: an expired or revoked `AISSTREAM_API_KEY` in the platform secret, a subscription whose areas match no traffic, or the upstream feed itself. In replay mode the scenario may simply have ended (`REPLAY_LOOP`) |
+| `argus-alb-auth-errors` | The public load balancer could not complete a Cognito sign-in, so officers are locked out while the balancer and its targets look healthy | The listener's authenticate action: a callback URL or client secret changed by a redeploy, the user pool domain, or Cognito itself. `aws elbv2 describe-rules` on the HTTPS listener |
+| `argus-sign-in-failures` | Cognito is throttling or refusing sign-ins: officers may be locked out | The user pool's sign-in activity; a hosted-UI or callback URL change after a redeploy; a locked or expired officer account |
+| `argus-deployment-rollbacks` | A service deployment failed and the circuit breaker rolled it back, so the old task definition is still serving | ECS service events for the rolled-back service, then that task's logs for the crash: usually a bad config value or a missing secret in the new revision |
+| `argus-sweeps-raising-nothing` | No alert raised by any sweep in six hours (`Argus/Sweeps` `AlertsRaised`, missing data breaches) | A genuinely quiet watch is possible; first check the feed alarm, then a sweep's own summary for `deferred` or failed detectors, then whether the tool gateway is denying the detector calls |
+| `argus-eval-<suite>` | The latest `evals/node_evals.py --push` run of a suite missed a floor in `evals/thresholds.yaml`, or no run has reported at all (missing data breaches) | Compare the failing run's `code_revision` and prompt hashes with the last passing one; do not promote the change. A silent alarm here means the gate stopped running, which is the case it used to hide |
 
 ## Pilots behind flags (ADR-0013)
 
@@ -134,13 +139,25 @@ CloudWatch alarms (`infra/cdk/stacks/alarms.py`, output `AlarmCount`) watch the 
 | Job `dead` | Transient failures exhausted retries | `GET /jobs/{id}` for the error; fix the cause; re-request (new job) |
 | `/area` says `positions extent` / `unknown` | Replay task has not published `scenario_meta` yet (or an old schema) | Wait for the replay task to finish `apply_schema`; check its log |
 | Services log `NameResolutionError` for `otel-collector` | Task started before the collector's Service Connect entry existed | `aws ecs update-service --force-new-deployment` on that service; the CDK dependency prevents it on fresh deploys |
-| Collector logs `OTLP API is supported with CloudWatch Logs as a Trace Segment Destination` | Account trace destination is X-Ray classic | Expected with the default `awsxray` exporter; enable `-c transactionSearch=true` only if you want OTLP-to-CloudWatch |
+| Collector logs `OTLP API is supported with CloudWatch Logs as a Trace Segment Destination` | Account trace destination is X-Ray classic | Expected with the default `awsxray` exporter. Transaction Search is already on (`transactionSearch` defaults to true); the message describes the account's classic trace destination, not this stack's setting. `-c transactionSearch=false` skips the switch, which also disables AgentCore Evaluations |
 | Positions missing after a schema change locally | `data/sql/*.sql` runs only on a fresh `pgdata` volume | `make down` to rebuild volumes; the shared volume is mounted at `/app/shared`, never over `/app/data` |
 | Map blank | Basemap CDN slow | Data layers draw first on a plain chart; the basemap merges when it arrives |
 
 ## Backups and retention
 
 Aurora automated backups (7 days) cover findings and audit; positions older than 90 days live in the S3 archive as Parquet (`positions/day=YYYY-MM-DD/`), moved to Glacier Instant Retrieval after 30 days, to Deep Archive after a year and deleted after seven. `retention_policy` documents the classes. The audit log is append-only and never pruned.
+
+Records are retained by default. `retainData` and `retainArchive` both default to true, so the cluster carries deletion protection and a final snapshot, and the archive bucket survives a stack deletion. `make destroy` passes `retainData=false` deliberately and takes a manual cluster snapshot named `argus-predestroy-<timestamp>` before deleting anything; `make destroy-keep-data` leaves the database and the archive in place and removes only the compute. Neither is reversible in the other direction without the restore below.
+
+### Restoring the database
+
+1. Find the snapshot: `aws rds describe-db-cluster-snapshots --query "DBClusterSnapshots[?starts_with(DBClusterSnapshotIdentifier, 'argus')].[DBClusterSnapshotIdentifier,SnapshotCreateTime,Status]" --output table`. Automated backups are named `rds:argus-...` and cover the last seven days; a pre-destroy snapshot is named `argus-predestroy-...` and does not expire.
+2. Restore it to a new cluster: `aws rds restore-db-cluster-from-snapshot --db-cluster-identifier argus-restored --snapshot-identifier <id> --engine aurora-postgresql --db-subnet-group-name <the data stack's subnet group> --vpc-security-group-ids <the database security group>`, then add an instance with `aws rds create-db-instance --db-instance-identifier argus-restored-1 --db-cluster-identifier argus-restored --db-instance-class db.serverless --engine aurora-postgresql`.
+3. Point the platform at it by updating the cluster endpoint in the stack's secret, or restore into the deployed cluster's identifier while the stacks are down. The schema is re-applied idempotently by the replay task at start, so a restored cluster needs no migration step.
+4. Check it: `SELECT count(*) FROM audit_events`, `SELECT max(ts) FROM positions`, and one `SELECT count(*) FROM evidence_snapshots`. The audit table is append-only, so its count should never be lower than before the restore.
+5. Positions older than the hot window are in the S3 archive as Parquet, not in the snapshot. Re-import a day with `SELECT * FROM read_parquet('s3://<archive>/positions/day=YYYY-MM-DD/*')` from any Parquet reader, or leave them archived: findings cite evidence snapshots, which are in the database.
+
+The automated-backup path uses the same commands with an `rds:`-prefixed identifier. This procedure has not yet been exercised end to end against this deployment; run it once against a restored copy before relying on it.
 
 The database password rotates every 30 days (Secrets Manager hosted rotation). Running tasks keep working: the API, the worker, the replay task and the tool servers re-read the secret the first time a connection fails and rebuild their pools (`services/api/dbconn.py` and its copies); Grafana reads the secret at start, so its task fails its health check after a rotation and ECS replaces it within a few minutes (`argus-grafana-down` may fire once). The internal load balancer's API listener is HTTPS with a deploy-time certificate; agents trust it through the SSM parameter `/argus/internal-ca`.
 
@@ -161,4 +178,4 @@ The Watch agent reviews at most `SWEEP_MAX_CANDIDATES` (default 25) detector can
 
 ### Scheduled sweeps arrive late
 
-Sweeps and investigations share one queue and one worker pool, and a burst of auto-opened investigations (each two to three minutes) delays the sweeps queued behind them. Raise `WORKER_CONCURRENCY`, or open investigations for `high` alerts only. A separate sweep queue with its own consumer is the structural fix and is on the roadmap.
+Sweeps and investigations have one queue each (`argus-sweeps`, `argus-jobs`) and one worker service each (`WORKER_QUEUE_KIND`), so a burst of auto-opened investigations cannot delay a sweep queued behind it (ADR-0016). A backlog on either queue has its own alarm; raise `WORKER_CONCURRENCY` for that worker, or open investigations for `high` alerts only.

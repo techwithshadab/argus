@@ -6,15 +6,16 @@ import asyncio
 import json
 import logging
 import os
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
+from uuid import UUID
 
 import redis.asyncio as redis
 import review_metrics
 import run_metrics
 import sli_pure
-from callerauth import CallerAuthMiddleware, matches_route
-from datakey import decrypting
+import sweep_metrics
+from callerauth import CallerAuthMiddleware, matches_route, officer_roles
 from dbconn import RotatingPool
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,16 +36,27 @@ from officerauth import (
 )
 from officerauth import mode as auth_mode
 from psycopg.types.json import Jsonb
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sse_starlette.sse import EventSourceResponse
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("api")
 
 app = FastAPI(title="Argus API", version="0.1.0")
-app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
-)
+#: Origins allowed to script the API from a browser. The watch floor is served from the
+#: same origin as `/api/*` (nginx proxies it), so nothing needs this by default: a
+#: wildcard let any page on the internet read every route the balancer let it reach.
+#: Set CORS_ALLOW_ORIGINS to a comma list for a separately served development page.
+CORS_ORIGINS = [
+    o.strip() for o in os.getenv("CORS_ALLOW_ORIGINS", "").split(",") if o.strip()
+]
+if CORS_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=CORS_ORIGINS,
+        allow_methods=["GET", "POST"],
+        allow_headers=["authorization", "content-type", "x-watch-officer"],
+    )
 
 # Routes that only agents call. With TOOL_AUTH=aws-iam they need a verified IAM identity
 # in TOOL_ALLOWED_ROLES. Everything else is the watch floor: with OFFICER_AUTH=oidc (AWS)
@@ -55,6 +67,12 @@ _AGENT_ROUTES = (
     ("POST", "/investigations/*/complete"),
     ("POST", "/investigations/*/fail"),
     ("POST", "/investigations/*/progress"),
+    # The orchestrator reads the track to derive where the vessel went dark
+    # (`gap_position`), because the Tasking agent has no AIS tool and, handed only
+    # prose, once proposed a SAR collection over New York for a vessel off Singapore.
+    # Without this the call is refused, the AOI check has nothing to compare against
+    # and every tasking recommendation is recorded unverified: 88 rejections an hour.
+    ("GET", "/vessels/*/track"),
 )
 
 
@@ -66,7 +84,9 @@ def requires_iam(path: str, method: str) -> bool:
     return needs_iam(path, method, is_agent_route)
 
 
-app.add_middleware(CallerAuthMiddleware, protected=requires_iam)
+app.add_middleware(
+    CallerAuthMiddleware, protected=requires_iam, agent_route=is_agent_route
+)
 app.add_middleware(OfficerAuthMiddleware)  # outermost: decides before caller auth
 
 
@@ -80,6 +100,30 @@ def current_officer(request: Request) -> str:
 
 pool = RotatingPool(min_size=1, max_size=10)
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
+#: The longest blocking XREAD the SSE handlers issue, and a socket read deadline kept
+#: above it so the deadline itself never interrupts a legitimate block.
+#: What actually killed these streams (~1700 errors/hour, and the watch floor's progress
+#: panel freezing so a running investigation looked stuck) is the server closing an idle
+#: connection mid-block: measured against a real Redis, that raises whatever the timeout
+#: is set to, and the old generators let it escape and end the stream. The retry in
+#: `gen()` is the fix; this deadline only bounds a hung socket.
+SSE_BLOCK_MS = 15000
+SSE_TIMEOUT_S = 30
+
+
+def sse_redis():
+    """A client for one SSE stream. Per request on purpose: each generator blocks in
+    `xread`, so a shared connection would serialise the streams behind each other. The
+    generator closes it in its `finally` (P17)."""
+    return redis.from_url(
+        REDIS_URL,
+        socket_timeout=SSE_TIMEOUT_S,
+        socket_connect_timeout=5,
+        socket_keepalive=True,
+        health_check_interval=30,
+    )
+
+
 SCENARIO_END = os.getenv("SCENARIO_END", "2026-09-01T08:00:00Z")
 
 
@@ -127,6 +171,30 @@ except Exception as e:  # noqa: BLE001
     log.warning("telemetry disabled: %s", e)
 
 
+def jsonable(obj: Any) -> Any:
+    """`json.dumps` default for values that came out of psycopg.
+
+    `jobs.id` and friends arrive as `UUID` objects and timestamps as `datetime`, and
+    both raise `TypeError: Object of type UUID is not JSON serializable` — inside
+    `Jsonb(...)` that means an audit write blows up *after* the state change it records,
+    which is how `open_investigation` committed its rows and then returned 500.
+    """
+    if isinstance(obj, UUID):
+        return str(obj)
+    if isinstance(obj, datetime | date):
+        return obj.isoformat()
+    return str(obj)
+
+
+def _dump_json(obj: Any) -> str:
+    return json.dumps(obj, default=jsonable)
+
+
+def jsonb(value: Any) -> Jsonb:
+    """Jsonb that never raises on a UUID or a datetime (see jsonable)."""
+    return Jsonb(value, dumps=_dump_json)
+
+
 def q(sql: str, params: tuple = ()) -> list[dict[str, Any]]:
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(sql, params)
@@ -155,7 +223,13 @@ def audit(
     details: dict | None = None,
     trace_id: str | None = None,
 ) -> None:
-    """Append-only audit event (see data/sql/002_review_audit.sql). Never raises past the caller."""
+    """Append-only audit event (see data/sql/002_review_audit.sql).
+
+    Raises if the write fails, and every caller lets it: an unaudited state change is
+    not an acceptable outcome on this API (CLAUDE.md). The docstring used to claim the
+    opposite, which is how a caller would come to treat it as best effort (P19). The
+    table is append-only by trigger; never update or delete a row here.
+    """
     q(
         """INSERT INTO audit_events (actor, actor_kind, action, entity_kind, entity_id, details, trace_id, manifest_ref)
            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
@@ -165,7 +239,7 @@ def audit(
             action,
             entity_kind,
             entity_id,
-            Jsonb(details or {}),
+            jsonb(details or {}),
             trace_id,
             trace_id,
         ),
@@ -196,7 +270,7 @@ def enqueue(kind: str, key: str, payload: dict, requested_by: str) -> tuple[str,
     rows = q(
         """INSERT INTO jobs (kind, idempotency_key, payload, timeout_s, requested_by) VALUES (%s,%s,%s,%s,%s)
            ON CONFLICT (kind, idempotency_key) WHERE status IN ('queued', 'running') DO NOTHING RETURNING id""",
-        (kind, key, Jsonb(payload), DEFAULT_TIMEOUTS[kind], requested_by),
+        (kind, key, jsonb(payload), DEFAULT_TIMEOUTS[kind], requested_by),
     )
     if rows:
         job_id = rows[0]["id"]
@@ -221,37 +295,78 @@ def enqueue(kind: str, key: str, payload: dict, requested_by: str) -> tuple[str,
 def open_investigation(
     mmsi: int, trigger: str, alert: dict | None, requested_by: str, actor_kind: str
 ) -> dict:
-    """Create the investigation row and its job. Returns {investigation_id, job_id, deduplicated}."""
+    """Create the investigation row and its job. Returns {investigation_id, job_id, deduplicated}.
+
+    The job row and the investigation row are inserted in one transaction, so the
+    partial unique index on the job's idempotency key arbitrates. A read-then-write
+    let the officer's request and the auto-investigate path both see no active job,
+    both insert an investigation, and both attach to the winner's job: the loser was
+    left `running` forever, counted as load by the KPI strip and never reaped (P8).
+    """
     alert_id = (alert or {}).get("id")
     key = investigation_key(mmsi, trigger, alert_id, datetime.now(UTC))
-    active = q(
-        "SELECT id FROM jobs WHERE kind='investigation' AND idempotency_key=%s AND status IN ('queued','running')",
-        (key,),
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO investigations (mmsi, trigger, alert_id, requested_by)
+               VALUES (%s,%s,%s,%s) RETURNING id""",
+            (mmsi, trigger, alert_id, requested_by),
+        )
+        inv_id = cur.fetchone()["id"]
+        cur.execute(
+            """INSERT INTO jobs (kind, idempotency_key, payload, timeout_s, requested_by)
+               VALUES ('investigation',%s,%s,%s,%s)
+               ON CONFLICT (kind, idempotency_key) WHERE status IN ('queued', 'running')
+               DO NOTHING RETURNING id""",
+            (
+                key,
+                jsonb(
+                    {
+                        "mmsi": mmsi,
+                        "trigger": trigger,
+                        "investigation_id": str(inv_id),
+                        "alert": alert or {},
+                    }
+                ),
+                DEFAULT_TIMEOUTS["investigation"],
+                requested_by,
+            ),
+        )
+        row = cur.fetchone()
+        if row is None:
+            # Another caller won the key. Roll the investigation row back with it, so
+            # no orphan is left, and return theirs.
+            conn.rollback()
+            active = q(
+                """SELECT id FROM jobs WHERE kind='investigation' AND idempotency_key=%s
+                    AND status IN ('queued','running') ORDER BY created_at DESC LIMIT 1""",
+                (key,),
+            )
+            job_id = active[0]["id"] if active else None
+            inv = (
+                q("SELECT id FROM investigations WHERE job_id=%s", (job_id,))
+                if job_id
+                else []
+            )
+            return {
+                "investigation_id": inv[0]["id"] if inv else None,
+                "job_id": job_id,
+                "deduplicated": True,
+            }
+        job_id = row["id"]
+        cur.execute("UPDATE investigations SET job_id=%s WHERE id=%s", (job_id, inv_id))
+        conn.commit()
+    # Only after the rows are committed, so a worker can never claim a job whose
+    # investigation does not exist yet.
+    queues["investigation"].send(job_id)
+    events.publish(
+        type="job",
+        job_id=job_id,
+        kind="investigation",
+        step="job",
+        status="queued",
+        investigation_id=str(inv_id),
+        mmsi=mmsi,
     )
-    if active:
-        inv = q("SELECT id FROM investigations WHERE job_id=%s", (active[0]["id"],))
-        return {
-            "investigation_id": inv[0]["id"] if inv else None,
-            "job_id": active[0]["id"],
-            "deduplicated": True,
-        }
-    rows = q(
-        "INSERT INTO investigations (mmsi, trigger, alert_id, requested_by) VALUES (%s,%s,%s,%s) RETURNING id",
-        (mmsi, trigger, alert_id, requested_by),
-    )
-    inv_id = rows[0]["id"]
-    job_id, _ = enqueue(
-        "investigation",
-        key,
-        {
-            "mmsi": mmsi,
-            "trigger": trigger,
-            "investigation_id": inv_id,
-            "alert": alert or {},
-        },
-        requested_by,
-    )
-    q("UPDATE investigations SET job_id=%s WHERE id=%s", (job_id, inv_id))
     audit(
         requested_by,
         actor_kind,
@@ -285,7 +400,7 @@ def snapshot(
             source,
             reference,
             summary,
-            Jsonb(payload),
+            jsonb(payload),
         ),
     )
 
@@ -335,9 +450,16 @@ def snapshot_alert(alert: dict, evidence: list[dict]) -> None:
 
 
 def snapshot_investigation(inv_id: str, report: dict) -> None:
+    """Freeze what this investigation cited. Idempotent: delivery is at least once, and
+    the snapshot now runs before the status guard, so a redelivered completion would
+    otherwise write a second set of rows (P18)."""
     mmsi = report.get("mmsi")
     if not mmsi:
         return
+    q(
+        "DELETE FROM evidence_snapshots WHERE entity_kind='investigation' AND entity_id=%s",
+        (inv_id,),
+    )
     pts = positions_between(mmsi, None, None, hours_before=24, hours_after=0)
     snapshot(
         "investigation",
@@ -348,12 +470,15 @@ def snapshot_investigation(inv_id: str, report: dict) -> None:
         source="positions",
         summary=f"{len(pts)} reports in the 24 h before the scenario clock",
     )
-    reg = decrypting(
-        lambda k: q(
-            """SELECT mmsi, imo, name, flag, flag_history, registered_owner, operator, pgp_sym_decrypt(beneficial_owner_enc, %s) AS beneficial_owner, sanctions, fleet, notes
+    # The snapshot is served to officers through GET /evidence, so it must stay
+    # pseudonymous: record whether a beneficial owner is on file, never the name
+    # itself. Only the registry MCP tool decrypts that column (ADR-0019).
+    reg = q(
+        """SELECT mmsi, imo, name, flag, flag_history, registered_owner, operator,
+                  (beneficial_owner_enc IS NOT NULL) AS beneficial_owner_on_file,
+                  sanctions, fleet, notes
            FROM registry WHERE mmsi=%s""",
-            (k, mmsi),
-        )
+        (mmsi,),
     )
     if reg:
         snapshot(
@@ -396,6 +521,13 @@ class ReviewIn(BaseModel):
     note: str | None = None
 
 
+#: The anomaly kinds this platform stores, and the severities it accepts. Both were
+#: free text: a model answering "HIGH — definitely" was stored verbatim, skipped the
+#: auto-investigate policy that compares against "high", and was interpolated
+#: unescaped into the Prometheus exposition (P10).
+ALERT_KINDS = ("ais_gap", "mmsi_spoof", "loitering", "zone_incursion", "rendezvous")
+ALERT_SEVERITIES = ("low", "medium", "high")
+
 _KIND_ALIASES = {
     "mmsi_conflict": "mmsi_spoof",
     "mmsi_conflicts": "mmsi_spoof",
@@ -412,23 +544,77 @@ class AlertIn(BaseModel):
     mmsi: int
     kind: str
     severity: str
-    score: float
-    rationale: str
+    score: float = Field(ge=0.0, le=1.0)
+    rationale: str = Field(max_length=4000)
     started_at: str | None = None
     ended_at: str | None = None
     evidence: list[dict] = []
-    created_by: str = "watch-agent"
+    created_by: str = Field(default="watch-agent", max_length=100)
 
     @field_validator("kind")
     @classmethod
     def _kind(cls, v: str) -> str:
         k = (v or "").strip().lower().replace("-", "_").replace(" ", "_")
-        return _KIND_ALIASES.get(k, k)
+        k = _KIND_ALIASES.get(k, k)
+        # Aliases are mapped first: models echo detector names (`mmsi_conflict`).
+        # Anything still unrecognised is refused rather than stored (P10).
+        if k not in ALERT_KINDS:
+            raise ValueError(f"kind must be one of {', '.join(ALERT_KINDS)}")
+        return k
+
+    @field_validator("severity")
+    @classmethod
+    def _severity(cls, v: str) -> str:
+        sev = (v or "").strip().lower()
+        if sev not in ALERT_SEVERITIES:
+            raise ValueError(f"severity must be one of {', '.join(ALERT_SEVERITIES)}")
+        return sev
+
+    @field_validator("started_at", "ended_at")
+    @classmethod
+    def _timestamp(cls, v: str | None) -> str | None:
+        if v is None or not str(v).strip():
+            return None
+        try:
+            # A malformed value used to reach psycopg and 500 an agent route, losing
+            # the alert a whole sweep had earned.
+            datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+        except ValueError as e:
+            raise ValueError("must be an ISO 8601 timestamp") from e
+        return str(v)
+
+
+#: Why an investigation was opened. Free text used to reach the job's idempotency key,
+#: so any distinct string defeated the one-active-job index and a caller could queue
+#: unbounded concurrent investigations for one vessel (P7). The alert kinds are here
+#: because `create_alert` opens an investigation with the alert's kind as the trigger.
+TRIGGERS = ("manual", "policy", *ALERT_KINDS)
 
 
 class InvestigationIn(BaseModel):
     trigger: str = "manual"
     alert_id: str | None = None
+
+    @field_validator("trigger")
+    @classmethod
+    def _trigger(cls, v: str) -> str:
+        t = (v or "").strip().lower()
+        t = _KIND_ALIASES.get(t, t)
+        if t not in TRIGGERS:
+            raise ValueError(f"trigger must be one of {', '.join(TRIGGERS)}")
+        return t
+
+    @field_validator("alert_id")
+    @classmethod
+    def _alert_id(cls, v: str | None) -> str | None:
+        if v is None or not str(v).strip():
+            return None
+        try:
+            return str(UUID(str(v)))
+        except ValueError as e:
+            # An unparseable id used to reach psycopg and come back as a 500.
+            raise ValueError("alert_id must be a UUID") from e
+        return None
 
 
 class CompleteIn(BaseModel):
@@ -468,12 +654,25 @@ def vessels():
     )
 
 
+#: A week is the most track the map or a specialist ever needs. Uncapped, one request
+#: scanned every daily partition of `positions` for that vessel (P9).
+TRACK_MAX_HOURS = 168
+TRACK_MAX_POINTS = 20000
+#: Manual sweeps share a key within this many minutes.
+MANUAL_SWEEP_BUCKET_MIN = 1
+#: Progress entries kept per job. A node reports a handful; an agent that loops
+#: grew the array without limit and every list page re-serialised it (P9).
+PROGRESS_MAX_ENTRIES = 200
+
+
 @app.get("/vessels/{mmsi}/track")
 def track(mmsi: int, hours: float = 24):
+    hours = max(0.0, min(float(hours), TRACK_MAX_HOURS))
     return q(
         """SELECT ts, ST_Y(geom::geometry) lat, ST_X(geom::geometry) lon, sog, cog, nav_status FROM positions
-           WHERE mmsi=%s AND ts > %s::timestamptz - (%s::float * interval '1 hour') ORDER BY ts""",
-        (mmsi, scenario_now(), hours),
+           WHERE mmsi=%s AND ts > %s::timestamptz - (%s::float * interval '1 hour')
+           ORDER BY ts LIMIT %s""",
+        (mmsi, scenario_now(), hours, TRACK_MAX_POINTS),
     )
 
 
@@ -500,20 +699,42 @@ def zones():
     }
 
 
+#: Rows any list route will return at once. The watch floor shows the newest first and
+#: an officer works the top of the queue; an unbounded select of a growing table was a
+#: slow page and a large response for no benefit (P5).
+LIST_LIMIT_DEFAULT = 200
+LIST_LIMIT_MAX = 1000
+
+
+def list_limit(limit: int | None) -> int:
+    """The row cap for a list route. `None` means the default; a number is clamped."""
+    if limit is None:
+        return LIST_LIMIT_DEFAULT
+    return max(1, min(int(limit), LIST_LIMIT_MAX))
+
+
 @app.get("/alerts")
-def alerts(status: str | None = None):
+def alerts(status: str | None = None, limit: int | None = None, offset: int = 0):
     return q(
-        "SELECT * FROM alerts WHERE (%s::text IS NULL OR status=%s) ORDER BY created_at DESC",
-        (status, status),
+        """SELECT * FROM alerts WHERE (%s::text IS NULL OR status=%s)
+           ORDER BY created_at DESC LIMIT %s OFFSET %s""",
+        (status, status, list_limit(limit), max(0, offset)),
     )
 
 
 @app.post("/alerts", status_code=201)
 def create_alert(a: AlertIn, request: Request):
     actor = agent_actor(request, a.created_by)
+    # The same vessel, kind and window is one alert however many sweeps see it. The
+    # unique index (data/sql/010) decides rather than a read-then-write, because two
+    # sweeps can race; a duplicate returns the alert that already exists (P5).
     rows = q(
         """INSERT INTO alerts (mmsi, kind, severity, score, started_at, ended_at, details, created_by)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+           ON CONFLICT (mmsi, kind, started_at)
+             WHERE status <> 'dismissed' AND started_at IS NOT NULL
+           DO NOTHING
+           RETURNING *""",
         (
             a.mmsi,
             a.kind,
@@ -521,10 +742,23 @@ def create_alert(a: AlertIn, request: Request):
             a.score,
             a.started_at,
             a.ended_at,
-            Jsonb({"rationale": a.rationale, "evidence": a.evidence}),
+            jsonb({"rationale": a.rationale, "evidence": a.evidence}),
             actor,
         ),
     )
+    if not rows:
+        existing = q(
+            """SELECT * FROM alerts
+                WHERE mmsi=%s AND kind=%s AND started_at=%s AND status <> 'dismissed'
+                ORDER BY created_at DESC LIMIT 1""",
+            (a.mmsi, a.kind, a.started_at),
+        )
+        if existing:
+            log.info("alert for %s %s already raised", a.mmsi, a.kind)
+            sweep_metrics.publish(raised=0, duplicate=1)
+            return existing[0]
+        raise HTTPException(409, "alert could not be stored")
+    sweep_metrics.publish(raised=1, duplicate=0)
     audit(
         actor,
         "agent",
@@ -565,12 +799,20 @@ def review_alert(
     if body.decision not in REVIEW_DECISIONS:
         raise HTTPException(400, "decision must be accepted or rejected")
     status_sql = ", status='dismissed'" if body.decision == "rejected" else ""
+    # A review is a one-way transition out of draft. Without the guard a second
+    # call flipped a colleague's decision and wrote a second audit entry as if it
+    # were the first, so the trail no longer showed who decided the case.
     rows = q(
-        f"UPDATE alerts SET review_state=%s, reviewed_by=%s, reviewed_at=now(){status_sql} WHERE id=%s RETURNING *",
+        f"UPDATE alerts SET review_state=%s, reviewed_by=%s, reviewed_at=now(){status_sql} "
+        "WHERE id=%s AND review_state='draft' RETURNING *",
         (body.decision, officer_id, alert_id),
     )
     if not rows:
-        raise HTTPException(404)
+        exists = q("SELECT 1 FROM alerts WHERE id=%s", (alert_id,))
+        raise HTTPException(
+            409 if exists else 404,
+            "alert already reviewed" if exists else "no alert with that id",
+        )
     audit(
         officer_id,
         "watch_officer",
@@ -628,25 +870,73 @@ def start_investigation(
     officer_id: str = Depends(current_officer),
 ):
     """Queue an investigation. Progress arrives on /events; the row is polled at /investigations/{id}."""
-    alert = (
-        q("SELECT * FROM alerts WHERE id=%s", (body.alert_id,))[0]
-        if body.alert_id
-        else None
-    )
+    alert = None
+    if body.alert_id:
+        rows = q("SELECT * FROM alerts WHERE id=%s", (body.alert_id,))
+        if not rows:
+            raise HTTPException(404, "no alert with that id")
+        alert = rows[0]
+        # The alert names the vessel. Without this check a case was opened on one
+        # vessel carrying another vessel's window and evidence (P7).
+        if int(alert["mmsi"]) != mmsi:
+            raise HTTPException(
+                400,
+                f"alert {body.alert_id} is for MMSI {alert['mmsi']}, not {mmsi}",
+            )
     opened = open_investigation(mmsi, body.trigger, alert, officer_id, "watch_officer")
     return {**opened, "status": "queued"}
 
 
 @app.post("/investigations/{inv_id}/complete")
 def complete(inv_id: str, body: CompleteIn, request: Request):
+    """Record a finished report. Only a running investigation may be completed.
+
+    Delivery is at least once and a slow branch can return after the case moved on,
+    so the guard is in the UPDATE itself: without it a replayed call overwrote an
+    already reviewed report, and the officer's decision silently disappeared.
+    """
     actor = agent_actor(request, "orchestrator-agent")
-    q(
-        "UPDATE investigations SET status='complete', report=%s, trace_id=%s, manifest=%s, updated_at=now() WHERE id=%s",
-        (Jsonb(body.report), body.trace_id, Jsonb(body.manifest or {}), inv_id),
+    # The snapshot is the case's evidence (ADR-0005). Capture it before the status
+    # moves: a failure used to be logged and nothing else, leaving a case that reads
+    # complete and reviewable with nothing behind it, and P4's one-way guard means it
+    # can never be repaired afterwards (P18).
+    running = q(
+        "SELECT 1 FROM investigations WHERE id=%s AND status='running'", (inv_id,)
     )
+    if not running:
+        raise HTTPException(409, "investigation is not running")
+    try:
+        snapshot_investigation(inv_id, body.report)
+        snapshot_ids = [
+            str(r["id"])
+            for r in q(
+                "SELECT id FROM evidence_snapshots WHERE entity_kind='investigation' AND entity_id=%s",
+                (inv_id,),
+            )
+        ]
+    except Exception as e:  # noqa: BLE001
+        log.exception("evidence snapshot failed for investigation %s", inv_id)
+        raise HTTPException(
+            503, "evidence snapshot failed; the report was not stored"
+        ) from e
+    done = q(
+        """UPDATE investigations SET status='complete', report=%s, trace_id=%s,
+                  manifest=%s, updated_at=now()
+            WHERE id=%s AND status='running' RETURNING mmsi""",
+        (
+            jsonb(body.report),
+            body.trace_id,
+            jsonb({**(body.manifest or {}), "evidence_snapshots": snapshot_ids}),
+            inv_id,
+        ),
+    )
+    if not done:
+        raise HTTPException(409, "investigation is not running")
+    # The row's own MMSI, never the report's: a report that names another vessel
+    # would otherwise close that vessel's open alerts.
     q(
         "UPDATE alerts SET status='investigated' WHERE mmsi=%s AND status='open'",
-        (body.report.get("mmsi"),),
+        (done[0]["mmsi"],),
     )
     audit(
         actor,
@@ -661,21 +951,6 @@ def complete(inv_id: str, body: CompleteIn, request: Request):
         body.trace_id,
     )
     run_metrics.publish(body.manifest or {})
-    try:
-        snapshot_investigation(inv_id, body.report)
-        ids = [
-            str(r["id"])
-            for r in q(
-                "SELECT id FROM evidence_snapshots WHERE entity_kind='investigation' AND entity_id=%s",
-                (inv_id,),
-            )
-        ]
-        q(
-            "UPDATE investigations SET manifest = coalesce(manifest, '{}'::jsonb) || %s::jsonb WHERE id=%s",
-            (Jsonb({"evidence_snapshots": ids}), inv_id),
-        )
-    except Exception as e:  # noqa: BLE001
-        log.warning("evidence snapshot failed for investigation %s: %s", inv_id, e)
     return {"ok": True}
 
 
@@ -690,12 +965,35 @@ def evidence(entity_kind: str, entity_id: str):
     )
 
 
+#: Payload keys that must never leave the API, whatever wrote the snapshot (P2).
+PERSONAL_SNAPSHOT_KEYS = ("beneficial_owner", "person_name", "owner_name")
+
+
+def redact_personal(payload):
+    """Strip personal-data keys from a snapshot payload, at any depth."""
+    if isinstance(payload, dict):
+        return {
+            k: ("[redacted]" if k in PERSONAL_SNAPSHOT_KEYS else redact_personal(v))
+            for k, v in payload.items()
+        }
+    if isinstance(payload, list):
+        return [redact_personal(v) for v in payload]
+    return payload
+
+
 @app.get("/evidence/{snapshot_id}")
-def evidence_item(snapshot_id: str):
-    rows = q("SELECT * FROM evidence_snapshots WHERE id=%s", (snapshot_id,))
+def evidence_item(snapshot_id: str, officer_id: str = Depends(current_officer)):
+    rows = q(
+        """SELECT id, entity_kind, entity_id, mmsi, kind, source, summary, payload,
+                  captured_at
+           FROM evidence_snapshots WHERE id=%s""",
+        (snapshot_id,),
+    )
     if not rows:
         raise HTTPException(404)
-    return rows[0]
+    row = dict(rows[0])
+    row["payload"] = redact_personal(row.get("payload"))
+    return row
 
 
 @app.get("/network/{mmsi}")
@@ -709,11 +1007,16 @@ def network(mmsi: int, depth: int = 2):
 
 @app.post("/investigations/{inv_id}/fail")
 def fail(inv_id: str, body: FailIn, request: Request):
+    """Mark a running investigation failed. A finished case is never reopened."""
     actor = agent_actor(request, "orchestrator-agent")
-    q(
-        "UPDATE investigations SET status='failed', report=%s, trace_id=%s, updated_at=now() WHERE id=%s",
-        (Jsonb({"error": body.error}), body.trace_id, inv_id),
+    failed = q(
+        """UPDATE investigations SET status='failed', report=%s, trace_id=%s,
+                  updated_at=now()
+            WHERE id=%s AND status='running' RETURNING id""",
+        (jsonb({"error": body.error}), body.trace_id, inv_id),
     )
+    if not failed:
+        raise HTTPException(409, "investigation is not running")
     audit(
         actor,
         "agent",
@@ -744,9 +1047,23 @@ def investigation_progress(inv_id: str, body: ProgressIn, request: Request):
         "status": body.status,
         "detail": body.detail[:500],
     }
+    # Keep the newest entries only. This is an agent-only route, so a looping or
+    # retrying orchestrator grew one JSONB value without bound, and every
+    # /investigations page re-serialised the whole array (P9). The UI reads the tail,
+    # so trimming the front is safe. One statement, because two workers may race here.
     q(
-        "UPDATE jobs SET progress = progress || %s::jsonb, updated_at = now() WHERE id=%s",
-        (Jsonb([entry]), rows[0]["job_id"]),
+        """UPDATE jobs
+              SET progress = (
+                    SELECT coalesce(jsonb_agg(e ORDER BY i), '[]'::jsonb)
+                      FROM (
+                        SELECT e, i FROM jsonb_array_elements(progress || %s::jsonb)
+                             WITH ORDINALITY AS t(e, i)
+                             ORDER BY i DESC LIMIT %s
+                      ) kept
+                  ),
+                  updated_at = now()
+            WHERE id=%s""",
+        (jsonb([entry]), PROGRESS_MAX_ENTRIES, rows[0]["job_id"]),
     )
     events.publish(
         type="job",
@@ -767,12 +1084,25 @@ def review_investigation(
     """Watch officer disposition of a VOI report: draft -> accepted | rejected."""
     if body.decision not in REVIEW_DECISIONS:
         raise HTTPException(400, "decision must be accepted or rejected")
+    # `report` is returned so the metric carries the report's priority; reviewing
+    # twice is refused so the first officer's verdict stands (see review_alert).
     rows = q(
-        "UPDATE investigations SET review_state=%s, reviewed_by=%s, reviewed_at=now() WHERE id=%s AND status='complete' RETURNING id, review_state, reviewed_by, reviewed_at, trace_id",
+        """UPDATE investigations SET review_state=%s, reviewed_by=%s, reviewed_at=now()
+            WHERE id=%s AND status='complete' AND review_state='draft'
+        RETURNING id, review_state, reviewed_by, reviewed_at, trace_id, report""",
         (body.decision, officer_id, inv_id),
     )
     if not rows:
-        raise HTTPException(404, "no completed investigation with that id")
+        already = q(
+            "SELECT 1 FROM investigations WHERE id=%s AND status='complete' AND review_state<>'draft'",
+            (inv_id,),
+        )
+        raise HTTPException(
+            409 if already else 404,
+            "already reviewed"
+            if already
+            else "no completed investigation with that id",
+        )
     audit(
         officer_id,
         "watch_officer",
@@ -785,15 +1115,19 @@ def review_investigation(
     review_metrics.publish(
         body.decision, officer_id, (rows[0].get("report") or {}).get("priority")
     )
-    return {k: v for k, v in rows[0].items() if k != "trace_id"}
+    return {k: v for k, v in rows[0].items() if k not in ("trace_id", "report")}
 
 
 @app.post("/sweep", status_code=202)
 def sweep(hours: float = 12, officer_id: str = Depends(current_officer)):
     """Queue a watch sweep. The worker calls the Watch agent directly."""
+    hours = max(1.0, min(float(hours), TRACK_MAX_HOURS))
     job_id, created = enqueue(
         "sweep",
-        sweep_key(datetime.now(UTC), 0, hours),
+        # Bucketed to the minute. `sweep_key(..., 0, ...)` is a new key every second,
+        # so the one-active-job index never collided and a held button queued a
+        # ten-minute Watch job per second (P9).
+        sweep_key(datetime.now(UTC), MANUAL_SWEEP_BUCKET_MIN, hours),
         {"hours": hours},
         officer_id,
     )
@@ -831,20 +1165,37 @@ def job(job_id: str):
 @app.get("/events")
 async def event_stream():
     """Server-sent job progress events (queued, node started/finished, succeeded, failed)."""
-    r = redis.from_url(REDIS_URL)
+    r = sse_redis()
 
     async def gen():
         last = "$"
-        while True:
-            res = await r.xread({EVENTS_STREAM: last}, block=15000, count=100)
-            if not res:
-                yield {"event": "ping", "data": "{}"}
-                continue
-            for _, entries in res:
-                for eid, fields in entries:
-                    last = eid
-                    yield {"event": "job", "data": fields[b"data"].decode()}
-            await asyncio.sleep(0)
+        try:
+            while True:
+                try:
+                    res = await r.xread(
+                        {EVENTS_STREAM: last}, block=SSE_BLOCK_MS, count=100
+                    )
+                except redis.RedisError as e:
+                    # A dropped read must not end the stream: the watch floor's progress
+                    # panel is this stream, and a closed one leaves an investigation
+                    # looking stuck. Ping (which also keeps the proxy from idling us out)
+                    # and read again.
+                    log.warning("events stream read failed, retrying: %s", e)
+                    yield {"event": "ping", "data": "{}"}
+                    continue
+                if not res:
+                    yield {"event": "ping", "data": "{}"}
+                    continue
+                for _, entries in res:
+                    for eid, fields in entries:
+                        last = eid
+                        yield {"event": "job", "data": fields[b"data"].decode()}
+                await asyncio.sleep(0)
+        finally:
+            # The generator is cancelled when the client goes away. Without this the
+            # per-request client and its pool were never closed, and the watch floor
+            # reopens both streams on every 401 and every rollout (P17).
+            await r.aclose()
 
     return EventSourceResponse(gen())
 
@@ -860,27 +1211,58 @@ class EvalRunIn(BaseModel):
     details: dict = {}
 
 
+def require_operator(request: Request) -> str:
+    """The verified operator role, or 403. Used where a score becomes a release gate.
+
+    An eval score is not an opinion, it is the thing that decides whether a prompt or a
+    model change may ship. The endpoint accepted any score from anyone the API let in,
+    so a signed-in officer, or an agent role before ADR-0019, could write a passing
+    score for a suite that had not run (gap audit P12).
+    """
+    caller = getattr(request.state, "caller", None)
+    allowed = officer_roles()
+    if not allowed:
+        # No operator role configured means local development: identity is not enforced.
+        return getattr(caller, "role", None) or "local"
+    if caller is None or caller.role not in allowed:
+        raise HTTPException(
+            403, "recording an eval run needs the operator role's caller token"
+        )
+    return caller.role
+
+
 @app.post("/evals", status_code=201)
-def record_eval(body: EvalRunIn):
+def record_eval(body: EvalRunIn, request: Request):
+    role = require_operator(request)
+    # The gate decides whether a change may ship, so it is audited like a decision:
+    # the signed-in officer when there is one, else the IAM role that presented the
+    # token. `actor_kind` stays `system` because the table's CHECK allows three
+    # values and this is tooling, not a person at the watch floor (P19).
+    actor = getattr(request.state, "officer", "") or f"iam:{role}"
     rows = q(
         "INSERT INTO eval_runs (suite, scenario, scores, passed, thresholds, code_revision, details) VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id, ts",
         (
             body.suite,
             body.scenario,
-            Jsonb(body.scores),
+            jsonb(body.scores),
             body.passed,
-            Jsonb(body.thresholds),
+            jsonb(body.thresholds),
             body.code_revision,
-            Jsonb(body.details),
+            jsonb(body.details),
         ),
     )
     audit(
-        "evals",
+        actor,
         "system",
         "eval.recorded",
         "eval_run",
         rows[0]["id"],
-        {"suite": body.suite, "passed": body.passed, "scores": body.scores},
+        {
+            "suite": body.suite,
+            "passed": body.passed,
+            "scores": body.scores,
+            "role": role,
+        },
     )
     return rows[0]
 
@@ -1016,6 +1398,21 @@ def slo():
     return slo_snapshot()
 
 
+def label(value) -> str:
+    """A Prometheus label value with the three characters the format reserves escaped.
+
+    Values here come from the database, and one alert whose severity or suite name
+    contained a quote or a newline used to corrupt the entire exposition, taking every
+    other metric down with it, including the ones the alarms read (P10).
+    """
+    return (
+        str("" if value is None else value)
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+    )
+
+
 @app.get("/metrics")
 def metrics():
     """Prometheus exposition of the SLIs (scraped locally by Prometheus, on AWS by the ADOT collector)."""
@@ -1036,7 +1433,7 @@ def metrics():
     lines.append("# TYPE argus_jobs_24h gauge")
     for r in counts:
         lines.append(
-            f'argus_jobs_24h{{kind="{r["kind"]}",status="{r["status"]}"}} {r["n"]}'
+            f'argus_jobs_24h{{kind="{label(r["kind"])}",status="{label(r["status"])}"}} {r["n"]}'
         )
     open_alerts = q(
         "SELECT count(*) AS n FROM alerts WHERE status='open' AND review_state='draft'"
@@ -1047,7 +1444,7 @@ def metrics():
         "SELECT severity, count(*) AS n FROM alerts WHERE status='open' AND review_state='draft' GROUP BY 1"
     ):
         lines.append(
-            f'argus_alerts_open_by_severity{{severity="{r["severity"]}"}} {r["n"]}'
+            f'argus_alerts_open_by_severity{{severity="{label(r["severity"])}"}} {r["n"]}'
         )
     oldest = q(
         "SELECT extract(epoch FROM now() - min(created_at)) AS s FROM alerts WHERE status='open' AND review_state='draft'"
@@ -1058,7 +1455,7 @@ def metrics():
         "SELECT status, count(*) AS n FROM investigations WHERE created_at > now() - interval '1 day' GROUP BY 1"
     ):
         lines.append(
-            f'argus_investigations_by_status{{status="{r["status"]}"}} {r["n"]}'
+            f'argus_investigations_by_status{{status="{label(r["status"])}"}} {r["n"]}'
         )
     proposed = q("SELECT count(*) AS n FROM tasking_requests WHERE status='proposed'")[
         0
@@ -1085,13 +1482,13 @@ def metrics():
         for k, v in (r["scores"] or {}).items():
             if isinstance(v, int | float):
                 lines.append(
-                    f'argus_eval_score{{suite="{r["suite"]}",metric="{k}"}} {float(v)}'
+                    f'argus_eval_score{{suite="{label(r["suite"])}",metric="{label(k)}"}} {float(v)}'
                 )
         lines.append(
-            f'argus_eval_passed{{suite="{r["suite"]}"}} {1 if r["passed"] else 0}'
+            f'argus_eval_passed{{suite="{label(r["suite"])}"}} {1 if r["passed"] else 0}'
         )
     lines.append(
-        f'argus_build_info{{code_revision="{os.getenv("GIT_SHA", "unknown")}",ais_mode="{os.getenv("AIS_MODE", "replay")}"}} 1'
+        f'argus_build_info{{code_revision="{label(os.getenv("GIT_SHA", "unknown"))}",ais_mode="{label(os.getenv("AIS_MODE", "replay"))}"}} 1'
     )
     return PlainTextResponse("\n".join(lines) + "\n")
 
@@ -1143,20 +1540,28 @@ def decide_tasking(
 @app.get("/stream")
 async def stream():
     """Server-sent events of live AIS positions from the Redis stream (for the map)."""
-    r = redis.from_url(REDIS_URL)
+    r = sse_redis()
 
     async def gen():
         last = "$"
-        while True:
-            res = await r.xread({"ais:positions": last}, block=5000, count=200)
-            if not res:
-                yield {"event": "ping", "data": "{}"}
-                continue
-            for _, entries in res:
-                for eid, fields in entries:
-                    last = eid
-                    yield {"event": "position", "data": fields[b"data"].decode()}
-            await asyncio.sleep(0)
+        try:
+            while True:
+                try:
+                    res = await r.xread({"ais:positions": last}, block=5000, count=200)
+                except redis.RedisError as e:
+                    log.warning("position stream read failed, retrying: %s", e)
+                    yield {"event": "ping", "data": "{}"}
+                    continue
+                if not res:
+                    yield {"event": "ping", "data": "{}"}
+                    continue
+                for _, entries in res:
+                    for eid, fields in entries:
+                        last = eid
+                        yield {"event": "position", "data": fields[b"data"].decode()}
+                await asyncio.sleep(0)
+        finally:
+            await r.aclose()  # see /events (P17)
 
     return EventSourceResponse(gen())
 
@@ -1198,7 +1603,14 @@ def area():
 
 
 @app.get("/ground-truth")
-def ground_truth():
-    """Injected anomalies from the scenario (for the evaluation page). Not visible to agents."""
+def ground_truth(request: Request, officer_id: str = Depends(current_officer)):
+    """Injected anomalies from the scenario, for the evaluation harness only.
+
+    This is the answer key: an agent that could read it would score perfectly without
+    detecting anything. The docstring said "not visible to agents" and nothing enforced
+    it; ADR-0019's allowlists closed most of it, and this closes the rest by asking for
+    the operator role explicitly rather than relying on a middleware fallback (P11).
+    """
+    require_operator(request)
     truth = scenario_meta("ground_truth")
     return [] if truth is None else truth

@@ -28,10 +28,15 @@ from shared import a2a, provenance
 from shared.config import next_tier, settings
 from shared.discovery import agent_url
 from shared.graph import (
+    MAX_AOI_DISTANCE_NM,
+    cap_for_degraded,
+    check_aoi,
     choose_report_prompt,
     data_caveats,
+    detector_window,
     evidence_gap,
     findings_payload,
+    gap_position,
     guardrail_blocked,
     json_object,
     known_sources,
@@ -47,8 +52,13 @@ from shared.graph import (
     usage_delta,
 )
 from shared.models import for_tier, model_unavailable, strands_model
-from shared.platform_client import post
-from shared.policy import hard_problems, validate_report
+from shared.platform_client import get, post
+from shared.policy import (
+    BALANCE_PROBLEM,
+    UNTRACEABLE_PROBLEM,
+    hard_problems,
+    validate_report,
+)
 from shared.prompts_loader import load_prompt, prompt_version
 from shared.schemas import (
     InvestigationFindings,
@@ -211,10 +221,21 @@ def investigator_branch(
     prior: str = "",
 ) -> InvestigationFindings:
     run.step(f"investigator_{scope}", "started")
+    # The detectors default to the last 24 hours from "now", which in live mode is the
+    # wall clock, so an alert older than a day was investigated over a window that did
+    # not contain it and the vessel read as benign (A14).
+    hours, until = detector_window(alert)
+    window = (
+        f"Detector window: pass hours={hours} and until={until} to every detector "
+        "tool, so they look at the alert rather than at the last day.\n"
+        if until
+        else ""
+    )
     msg = (
         f"Scope: {scope}\nVessel MMSI: {mmsi}\nTrigger: {trigger}\n"
         f"Investigation: {run.investigation_id or 'adhoc'}\n"
         f"Triggering alert: {json.dumps(alert)}\n"
+        + window
         + prior_context_block(prior)
         + "Return the InvestigationFindings JSON for your scope only."
     )
@@ -263,26 +284,57 @@ def investigator_branch(
     return findings
 
 
+def last_known_position(mmsi: int, alert: dict) -> dict | None:
+    """The vessel's last reported position before the alert window, from the platform.
+
+    The Tasking agent has no AIS tool, so this is the only way it can be told where
+    the vessel actually is; a failure here is not fatal, but the AOI check then has
+    nothing to compare against and the recommendation is treated as unverified.
+    """
+    try:
+        return gap_position(alert, get(f"/vessels/{mmsi}/track?hours=48"))
+    except Exception as e:  # noqa: BLE001
+        log.warning("no track for %s, tasking AOI cannot be checked: %s", mmsi, e)
+        return None
+
+
 def tasking_node(
     run: Run, mmsi: int, findings: InvestigationFindings, alert: dict
 ) -> dict | None:
     run.step("tasking", "started")
     gap = evidence_gap(findings, alert)
+    # The position is resolved in code and stated as coordinates. Given only prose,
+    # the model invented an AOI: a live run proposed a collection over New York for
+    # a vessel off Singapore (A2).
+    position = last_known_position(mmsi, alert)
+    where = (
+        f"Last known position before the gap: {position['lat']:.4f}, {position['lon']:.4f} "
+        f"at {position['ts']}. Centre the AOI there unless the evidence says otherwise; "
+        f"it must be within {int(MAX_AOI_DISTANCE_NM)} nm of that point."
+        if position
+        else "Last known position: not available; do not guess coordinates."
+    )
     msg = (
         f"Vessel MMSI: {mmsi}\nBehaviour summary: {findings.behaviour_summary}\n"
-        f"Evidence gap (position and time where evidence is missing): {gap}\n"
+        f"Evidence gap (time where evidence is missing): {gap}\n{where}\n"
         "Decide whether collection would help and, if so, propose it. Return the TaskingRecommendation JSON."
     )
+    # The URL actually called, not the configured fallback. On AWS the registry
+    # resolves a gateway target, so the manifest attested an endpoint that was never
+    # invoked, and the probe short-circuits on a gateway URL anyway (A13).
+    resolved = settings.a2a_tasking_url
     try:
         if settings.tasking_harness_arn:
+            resolved = f"harness:{settings.tasking_harness_arn}"
             text = harness_text(
                 settings.tasking_harness_arn,
                 msg,
                 runtime_session_id(run.investigation_id, "tasking"),
             )
         else:
+            resolved = agent_url("tasking", settings.a2a_tasking_url)
             text = a2a.send(
-                agent_url("tasking", settings.a2a_tasking_url),
+                resolved,
                 msg,
                 timeout=NODE_TIMEOUT_S,
                 session_id=runtime_session_id(run.investigation_id, "tasking"),
@@ -290,13 +342,31 @@ def tasking_node(
         rec = TaskingRecommendation.model_validate(
             tasking_payload(a2a.json_object(text), mmsi)
         ).model_dump()
+        problems = check_aoi(rec, position)
+        if problems:
+            # An officer cannot verify a coordinate by eye, and a wrong AOI reads
+            # exactly like a right one. Drop the proposal rather than offer it.
+            reason = "; ".join(problems)
+            log.warning("tasking recommendation rejected for %s: %s", mmsi, reason)
+            run.node(
+                "tasking", "tasking", url=resolved, error=f"rejected: {reason[:250]}"
+            )
+            run.step("tasking", "finished", f"collection not proposed: {reason[:150]}")
+            return None
     except Exception as e:  # noqa: BLE001
         # Tasking is advisory: a failure here must not lose the investigation.
         log.warning("tasking node failed: %s", e)
-        run.node("tasking", "tasking", error=str(e)[:300])
+        run.node("tasking", "tasking", url=resolved, error=str(e)[:300])
         run.step("tasking", "failed", str(e)[:200])
         return None
-    run.node("tasking", "tasking", **agent_provenance(settings.a2a_tasking_url))
+    # A gateway URL cannot be probed, so the agent's own answer carries its provider,
+    # model and tier; without this the manifest's tasking node was empty on AWS.
+    run.node(
+        "tasking",
+        "tasking",
+        url=resolved,
+        **(agent_provenance(resolved) | (rec.get("provenance") or {})),
+    )
     run.step(
         "tasking",
         "finished",
@@ -474,6 +544,11 @@ def report_node(
         report.caveats = data_caveats(
             settings.ais_mode, settings.sanctions_source, report.caveats
         )
+        # A failed branch caps what the report may claim. Applied in code, before the
+        # policy check, so the cap and its caveat cannot be dropped by a retry (A3).
+        report = VesselOfInterestReport.model_validate(
+            cap_for_degraded(report.model_dump(), findings)
+        )
         problems = validate_report(report.model_dump(), sources)
         run.node(
             "report",
@@ -489,12 +564,20 @@ def report_node(
         )
         if not problems or (attempt >= 2 and not hard_problems(problems)):
             if problems:
-                # Only soft problems left after the retry: keep the report, say so in it.
+                # Only soft problems left after the retry: keep the report, say in it
+                # which one, so the officer reads it knowing the flaw (ADR-0020).
                 log.warning("report accepted with soft policy problems: %s", problems)
-                report.caveats = (
-                    report.caveats.rstrip()
-                    + " The report states no counter-indicators or information gaps."
-                ).strip()
+                notes = []
+                if BALANCE_PROBLEM in problems:
+                    notes.append(
+                        "The report states no counter-indicators or information gaps."
+                    )
+                if UNTRACEABLE_PROBLEM in problems:
+                    notes.append(
+                        "No specialist line of enquiry cited a tool result, so this "
+                        "assessment is not traceable to evidence."
+                    )
+                report.caveats = " ".join([report.caveats.rstrip(), *notes]).strip()
             run.step(
                 "report",
                 "finished",

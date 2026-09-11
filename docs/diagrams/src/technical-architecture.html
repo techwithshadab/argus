@@ -166,7 +166,7 @@
 <div class="node w84" style="left:1350px;top:120px"><div class="ico"><img src="icons/aws/kms.svg" alt=""></div><div class="lb">KMS keys</div></div>
 <div class="node w84" style="left:1480px;top:120px"><div class="ico"><img src="icons/aws/parameterstore.svg" alt=""></div><div class="lb">Parameter Store</div></div>
 <div class="node w84" style="left:1610px;top:120px"><div class="ico"><img src="icons/aws/acm.svg" alt=""></div><div class="lb">ACM certificates</div></div>
-<div class="note" style="left:1672px;top:108px;width:188px">One IAM role per runtime and task. Secrets are read by role at start-up, never baked into images: the database password rotates monthly, personal data is encrypted with the data key, the balancers' certificates are issued at deploy time.</div>
+<div class="note" style="left:1672px;top:108px;width:188px">One IAM role per runtime and task. Secrets are read by role at start-up, never baked into images: the database password rotates monthly, personal data is encrypted with the data key, certificates are issued at deploy time. Records are retained by default and backed up to their own vault.</div>
 
 <!-- VPC -->
 <div class="grp" style="left:226px;top:236px;width:924px;height:564px"></div>

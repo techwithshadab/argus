@@ -63,18 +63,38 @@ def check_actions(actions: list[str]) -> list[str]:
     return bad
 
 
+#: Said when a report cites a tool but no specialist cited anything at all. Soft, not
+#: hard: this is the both-branches-degraded case, which ADR-0020 already caps and
+#: caveats, and failing it would destroy a report that honestly says it found little.
+UNTRACEABLE_PROBLEM = (
+    "evidence cannot be traced: no specialist cited any tool, so nothing in this "
+    "report rests on a tool result"
+)
+
+
 def check_evidence(
     report_evidence: list[dict], known_sources: set[str], indicators: list[str]
 ) -> list[str]:
-    """Problems with a report's evidence: unknown sources, or no evidence at all for indicators."""
+    """Problems with a report's evidence: unknown sources, or no evidence at all for indicators.
+
+    Sources are matched exactly. Prefix matching let a report cite `ais` and satisfy
+    every AIS tool, or invent `ais.find_ais_gaps_and_the_thing_I_imagined` and match
+    the real one; both sides are canonical `server.tool` by the time they arrive
+    (`canonical_source`), so leniency bought nothing and cost the guarantee (A6).
+    """
     problems = []
+    known = {s.strip() for s in known_sources if s and s.strip()}
     for e in report_evidence:
         src = (e.get("source") or "").strip()
         if not src:
             problems.append("evidence entry without a source")
-        elif known_sources and not any(
-            src == k or src.startswith(k) or k.startswith(src) for k in known_sources
-        ):
+        elif not known:
+            # An empty known set is the degraded case, not a licence to trust the
+            # model: skipping the check here was skipping it exactly when a report
+            # was most likely to be invented.
+            if UNTRACEABLE_PROBLEM not in problems:
+                problems.append(UNTRACEABLE_PROBLEM)
+        elif src not in known:
             problems.append(f"evidence source not used by any specialist: {src}")
     if indicators and not report_evidence:
         problems.append("indicators present but no evidence cited")
@@ -85,7 +105,7 @@ BALANCE_PROBLEM = (
     "no counter-indicators or information gaps stated: fill counter_indicators with what "
     "argues against the assessment, or information_gaps with what could not be established"
 )
-SOFT_PROBLEMS = (BALANCE_PROBLEM,)
+SOFT_PROBLEMS = (BALANCE_PROBLEM, UNTRACEABLE_PROBLEM)
 
 
 def hard_problems(problems: list[str]) -> list[str]:

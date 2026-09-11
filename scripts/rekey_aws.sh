@@ -12,4 +12,4 @@ TASK=$(aws ecs run-task --cluster "$CLUSTER" --task-definition "$TASKDEF" --laun
   --query "tasks[0].taskArn" --output text)
 echo "rekey task $TASK"; aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK" --region "$REGION"
 aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK" --region "$REGION" --query "tasks[0].containers[0].[exitCode,reason]" --output text
-aws logs tail /argus/platform --region "$REGION" --since 15m --filter-pattern rewrote | tail -5 || true
+aws logs tail /argus/services --region "$REGION" --since 15m --filter-pattern rewrote | tail -5 || true

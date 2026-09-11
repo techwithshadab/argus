@@ -3,10 +3,13 @@
 import asyncio
 import base64
 import json
+import re
 import sys
+from pathlib import Path
 
 import pytest
 
+ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, "services/api")
 import officerauth  # noqa: E402
 from callerauth import ANONYMOUS, AuthError, Caller  # noqa: E402
@@ -156,9 +159,14 @@ def test_middleware_oidc_mode(monkeypatch):
 
 
 def test_api_uses_the_dependency_not_the_header():
+    """Officer identity comes from the dependency, never from a header a caller sets.
+
+    The count is not fixed: what matters is that every officer route resolves the
+    officer through `current_officer` and that no handler reads a header instead.
+    """
     src = open("services/api/main.py").read()
     assert "Header(" not in src
-    assert src.count("Depends(current_officer)") == 6
+    assert src.count("Depends(current_officer)") >= 7
     assert "app.add_middleware(OfficerAuthMiddleware)" in src
     assert '@app.get("/whoami")' in src
 
@@ -194,3 +202,102 @@ def test_verify_accepts_a_padded_token_as_the_balancer_signs_it(monkeypatch):
     monkeypatch.setattr(officerauth, "alb_public_key", lambda kid, region: pem)
     out = verify_id_token(token, "us-east-1", "arn:mine", "https://pool")
     assert out["email"] == "officer@x"
+
+
+# --- P1: agents propose, officers decide (pinned) ---------------------------------
+
+
+def _caller(role: str):
+    from callerauth import Caller
+
+    return Caller(
+        arn=f"arn:aws:sts::1:assumed-role/{role}/s",
+        account="1",
+        role=role,
+        kind="agent",
+    )
+
+
+def _agent_routes() -> tuple[tuple[str, str], ...]:
+    """The API's _AGENT_ROUTES, read from source: importing main.py needs psycopg."""
+    src = (ROOT / "services/api/main.py").read_text()
+    block = src.split("_AGENT_ROUTES = (", 1)[1].split(")\n\n", 1)[0]
+    pairs = re.findall(r'\("([A-Z]+)",\s*"([^"]+)"\)', block)
+    assert pairs, "could not parse _AGENT_ROUTES"
+    return tuple(pairs)
+
+
+def _authorize_for(path: str, method: str, role: str, monkeypatch) -> bool:
+    """True when a caller holding `role` is admitted on that route by the split
+    allowlists, mirroring CallerAuthMiddleware's choice."""
+    import callerauth
+    from callerauth import matches_route
+
+    def is_agent_route(p: str, m: str) -> bool:
+        return matches_route(_agent_routes(), p, m)
+
+    monkeypatch.setenv(
+        "TOOL_ALLOWED_ROLES",
+        "argus-agent-watch,argus-agent-orchestrator,argus-operator",
+    )
+    monkeypatch.setenv(
+        "AGENT_ALLOWED_ROLES", "argus-agent-watch,argus-agent-orchestrator"
+    )
+    monkeypatch.setenv("OFFICER_ALLOWED_ROLES", "argus-operator")
+    roles = (
+        callerauth.agent_roles()
+        if is_agent_route(path, method)
+        else callerauth.officer_roles()
+    )
+    try:
+        callerauth.authorize(_caller(role), roles)
+        return True
+    except callerauth.AuthError:
+        return False
+
+
+def test_agent_roles_cannot_take_officer_actions(monkeypatch):
+    """The product's core guarantee: an agent may report findings but never approve
+    tasking, review a report or request a sweep."""
+    officer_routes = [
+        ("POST", "/tasking/abc/approve"),
+        ("POST", "/tasking/abc/reject"),
+        ("POST", "/alerts/abc/review"),
+        ("POST", "/investigations/abc/review"),
+        ("POST", "/sweep"),
+    ]
+    for method, path in officer_routes:
+        for agent in ("argus-agent-watch", "argus-agent-orchestrator"):
+            assert not _authorize_for(path, method, agent, monkeypatch), (
+                f"{agent} must not reach {method} {path}"
+            )
+        assert _authorize_for(path, method, "argus-operator", monkeypatch)
+
+
+def test_agent_routes_admit_agents_and_refuse_unknown_roles(monkeypatch):
+    for method, path in (
+        ("POST", "/alerts"),
+        ("POST", "/investigations/abc/complete"),
+        ("POST", "/investigations/abc/fail"),
+        ("POST", "/investigations/abc/progress"),
+    ):
+        assert _authorize_for(path, method, "argus-agent-watch", monkeypatch)
+        assert not _authorize_for(path, method, "argus-agent-tasking", monkeypatch)
+
+
+def test_officer_allowlist_is_fail_closed_when_unset(monkeypatch):
+    """With no OFFICER_ALLOWED_ROLES the middleware falls back to the full allowlist, so
+    the CDK must always set it; this test pins that the fallback is the only path."""
+    import callerauth
+
+    monkeypatch.delenv("OFFICER_ALLOWED_ROLES", raising=False)
+    assert callerauth.officer_roles() == set()
+
+
+def test_cdk_sets_both_allowlists():
+    """The stack must name the two lists, and no agent role may be an officer role."""
+    src = (ROOT / "infra/cdk/stacks/platform_stack.py").read_text()
+    assert '"AGENT_ALLOWED_ROLES": "argus-agent-watch,argus-agent-orchestrator"' in src
+    assert '"OFFICER_ALLOWED_ROLES": "argus-operator"' in src
+    officers = src.split('"OFFICER_ALLOWED_ROLES": "')[1].split('"')[0]
+    assert "agent" not in officers

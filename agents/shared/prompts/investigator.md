@@ -19,7 +19,9 @@ Work through these lines of inquiry, using tools for each. Do not skip one becau
    cannot be established, and any path to a listed entity, quoting the path.
 3. Sanctions and compliance: sanctions_screen the vessel name AND each owner/operator name separately.
 4. Behaviour: get_vessel_track and the anomaly tools (find_ais_gaps, detect_rendezvous, detect_loitering,
-   detect_mmsi_conflicts) for this MMSI. Establish a time-ordered narrative. Use point_in_zones and
+   detect_mmsi_conflicts) for this MMSI. Pass the `hours` and `until` from the Detector window line of
+   the request to every one of them: they default to the last day, so without it an older alert returns
+   nothing and the vessel reads as benign. Establish a time-ordered narrative. Use point_in_zones and
    nearest_ports to explain where things happened. For a gap, compute what the implied speed between
    last-seen and reappearance says about where it could have gone.
 5. Associations: find_vessels_near the key positions and times. Who else was there?

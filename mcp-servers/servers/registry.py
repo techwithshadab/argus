@@ -14,7 +14,7 @@ import httpx
 from common.datakey import decrypting
 from common.db import q
 from common.identity import workload_access_token
-from common.safety import untrusted
+from common.safety import name_matches, untrusted
 from common.telemetry import traced_tool
 from mcp.server.fastmcp import FastMCP
 
@@ -123,7 +123,6 @@ def sanctions_screen(entity_name: str) -> dict:
             (k,),
         )
     )
-    needle = entity_name.lower()
     for r in rows:
         for entry in r["sanctions"] or []:
             names = [
@@ -133,7 +132,7 @@ def sanctions_screen(entity_name: str) -> dict:
                 r["beneficial_owner"],
                 entry.get("entry", ""),
             ]
-            if any(n and needle in n.lower() for n in names):
+            if any(name_matches(entity_name, n) for n in names):
                 hits.append(
                     {
                         "source": "local-list",
@@ -208,7 +207,11 @@ def fleet_associations(mmsi: int) -> dict:
     return {
         "mmsi": mmsi,
         "declared_fleet": r["fleet"],
-        "same_ownership_in_registry": siblings,
+        # In live mode the registry is populated from AIS static data, so a sibling's
+        # name is unauthenticated feed text reaching the model unmarked (A10).
+        "same_ownership_in_registry": [
+            {**s, "name": untrusted(s.get("name"), "ais static")} for s in siblings
+        ],
     }
 
 

@@ -6,8 +6,10 @@
 from __future__ import annotations
 
 from aws_cdk import Duration, RemovalPolicy, Stack
+from aws_cdk import aws_backup as backup
 from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_elasticache as elasticache
+from aws_cdk import aws_events as events
 from aws_cdk import aws_kms as kms
 from aws_cdk import aws_rds as rds
 from aws_cdk import aws_s3 as s3
@@ -15,6 +17,13 @@ from aws_cdk import aws_secretsmanager as sm
 from constructs import Construct
 
 from .lifecycle import is_paused
+
+
+def _flag(value, default: bool) -> bool:
+    """A context flag, with an explicit default. Unset means the default, not false."""
+    if value is None or str(value).strip() == "":
+        return default
+    return str(value).strip().lower() in ("1", "true", "yes")
 
 
 class DataStack(Stack):
@@ -38,13 +47,12 @@ class DataStack(Stack):
         )
         db_sg.add_ingress_rule(services_sg, ec2.Port.tcp(5432), "services to postgres")
 
-        # -c retainData=true: deletion protection and a final snapshot instead of a delete
-        # (`make destroy` then needs the flag off first). -c auroraReader=true adds a
-        # reader that scales with the writer (a second instance, about $43/month idle).
-        retain_data = str(self.node.try_get_context("retainData") or "").lower() in (
-            "true",
-            "yes",
-        )
+        # Records are kept unless someone says otherwise: the runbook and the security
+        # page promise seven-year retention, and the flag defaulted to false, so a
+        # `make destroy` deleted the evidence behind every past investigation without
+        # a prompt. `-c retainData=false` is now the deliberate act, and it is what
+        # `make destroy` passes (I1).
+        retain_data = _flag(self.node.try_get_context("retainData"), default=True)
         reader = str(self.node.try_get_context("auroraReader") or "").lower() in (
             "true",
             "yes",
@@ -103,6 +111,64 @@ class DataStack(Stack):
         self.cache_endpoint = self.cache.attr_endpoint_address
         self.cache_port = self.cache.attr_endpoint_port
 
+        # ---- backups beyond the seven days Aurora keeps (I2) ----
+        # Automated backups are same-region and expire after a week, so a deletion or a
+        # regional loss older than that took everything with it while the runbook
+        # promised a seven-year posture. The vault carries its own key: the data key
+        # below is destroyable, and a vault encrypted with it becomes unreadable a week
+        # after a destroy, which would make the monthly rule a lie. `-c backups=false`
+        # switches the plan off for a short-lived demo account.
+        if _flag(self.node.try_get_context("backups"), default=True):
+            vault_key = kms.Key(
+                self,
+                "BackupKey",
+                description="Argus backup vault",
+                enable_key_rotation=True,
+                removal_policy=RemovalPolicy.RETAIN,
+            )
+            self.backup_vault = backup.BackupVault(
+                self,
+                "Vault",
+                backup_vault_name="argus-vault",
+                encryption_key=vault_key,
+                # A vault holding recovery points blocks `cdk destroy`, so it follows
+                # the same flag as the cluster: deleting is the deliberate act (I1).
+                removal_policy=(
+                    RemovalPolicy.RETAIN if retain_data else RemovalPolicy.DESTROY
+                ),
+            )
+            plan = backup.BackupPlan(
+                self,
+                "BackupPlan",
+                backup_plan_name="argus",
+                backup_vault=self.backup_vault,
+            )
+            plan.add_rule(
+                backup.BackupPlanRule(
+                    rule_name="daily-35d",
+                    schedule_expression=events.Schedule.cron(hour="5", minute="0"),
+                    delete_after=Duration.days(35),
+                )
+            )
+            plan.add_rule(
+                backup.BackupPlanRule(
+                    rule_name="monthly-7y",
+                    schedule_expression=events.Schedule.cron(
+                        day="1", hour="6", minute="0"
+                    ),
+                    # Cold storage needs at least 90 days of retention, so it belongs
+                    # on the monthly rule only.
+                    move_to_cold_storage_after=Duration.days(90),
+                    delete_after=Duration.days(7 * 365 + 2),
+                )
+            )
+            plan.add_selection(
+                "Aurora",
+                resources=[
+                    backup.BackupResource.from_rds_database_cluster(self.cluster)
+                ],
+            )
+
         # ---- personal-data encryption (phase 2): one KMS key, one data key in Secrets Manager ----
         # Services read the data key once at startup (datakey.py) and use it with pgcrypto for the
         # columns that hold personal data. Rotating the secret re-keys nothing by itself; that is a
@@ -128,11 +194,7 @@ class DataStack(Stack):
         )
 
         # ---- positions archive (ADR-0005): daily partitions older than the hot window, as Parquet ----
-        retain = str(self.node.try_get_context("retainArchive") or "").lower() in (
-            "1",
-            "true",
-            "yes",
-        )
+        retain = _flag(self.node.try_get_context("retainArchive"), default=True)
         # Access logs of the two load balancers and the archive bucket, 90 days. ALB log
         # delivery needs SSE-S3, not KMS.
         self.logs_bucket = s3.Bucket(

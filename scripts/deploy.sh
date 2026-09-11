@@ -11,6 +11,31 @@ export CDK_DEFAULT_ACCOUNT="${CDK_DEFAULT_ACCOUNT:-$(aws sts get-caller-identity
 export CDK_DEFAULT_REGION="${CDK_DEFAULT_REGION:-${AWS_REGION:-us-east-1}}"
 export JSII_SILENCE_WARNING_DEPRECATED_NODE_VERSION=1
 
+# A first deploy used to fail late and expensively: no Docker meant the certificate
+# Lambda failed to bundle at synth, no buildx meant the ARM64 runtime images failed
+# after the network and data stacks already existed, and a rollback that catches
+# AgentCore Memory mid-CREATING wedges the stack (I9).
+preflight() {
+  local fail=0
+  command -v docker >/dev/null || { echo "missing: docker (asset and certificate bundling need it)"; fail=1; }
+  docker info >/dev/null 2>&1 || { echo "docker is installed but not running"; fail=1; }
+  docker buildx version >/dev/null 2>&1 || { echo "missing: docker buildx (AgentCore runtimes are linux/arm64)"; fail=1; }
+  command -v node >/dev/null || { echo "missing: node 20+ (aws-cdk)"; fail=1; }
+  if command -v node >/dev/null; then
+    [ "$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)" -ge 20 ] \
+      || { echo "node 20 or newer is required"; fail=1; }
+  fi
+  python3 -c 'import sys; sys.exit(0 if sys.version_info[:2] >= (3,12) else 1)' \
+    || { echo "python 3.12 or newer is required"; fail=1; }
+  # A warning, never a failure: listing models needs a permission a scoped deployer
+  # may not have, and `-c allowExternalModelProviders` is a legitimate configuration.
+  aws bedrock list-foundation-models --region "$CDK_DEFAULT_REGION" \
+    --query "modelSummaries[?starts_with(modelId,'amazon.nova')].modelId" --output text 2>/dev/null \
+    | grep -q nova || echo "warning: no amazon.nova model visible in $CDK_DEFAULT_REGION (request access in the Bedrock console)"
+  [ "$fail" = "0" ] || { echo "preflight failed; nothing was deployed."; exit 1; }
+}
+preflight
+
 python3 -m venv .venv >/dev/null 2>&1 || true
 . .venv/bin/activate
 pip install -q -r requirements.txt
@@ -22,7 +47,13 @@ PAUSED="${PAUSED:-false}"
 ENV_FILE="$REPO_ROOT/.env"
 env_or_dotenv() { # name
   local v="${!1:-}"
-  if [ -z "$v" ] && [ -f "$ENV_FILE" ]; then v="$(grep -E "^$1=" "$ENV_FILE" | tail -1 | cut -d= -f2- | sed 's/[[:space:]]*#.*$//')"; fi
+  if [ -z "$v" ] && [ -f "$ENV_FILE" ]; then
+    # No comment stripping: `.env` comments live on their own lines (CLAUDE.md), and a
+    # '#' inside a key is key material. Stripping it stored a truncated key, which
+    # surfaced later as a reconnect loop indistinguishable from an expired one (I8).
+    v="$(grep -E "^$1=" "$ENV_FILE" | tail -1 | cut -d= -f2-)"
+    v="${v%"${v##*[![:space:]]}"}"
+  fi
   printf '%s' "$v"
 }
 AIS_MODE="$(env_or_dotenv AIS_MODE)"; AIS_MODE="${AIS_MODE:-replay}"
@@ -39,7 +70,13 @@ set_secret_and_restart() { # output-key value service-name-fragment
   local arn
   arn=$(aws cloudformation describe-stacks --stack-name argus-platform --region "$CDK_DEFAULT_REGION" \
     --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text)
-  aws secretsmanager put-secret-value --secret-id "$arn" --secret-string "$2" --region "$CDK_DEFAULT_REGION" >/dev/null
+  # By file, not argv: a key passed on the command line is visible to `ps` and lands
+  # in shell history and any CI log that echoes commands (I8).
+  local tmp
+  tmp="$(mktemp)"; chmod 600 "$tmp"
+  trap 'rm -f "$tmp"' RETURN
+  printf '%s' "$2" > "$tmp"
+  aws secretsmanager put-secret-value --secret-id "$arn" --secret-string "file://$tmp" --region "$CDK_DEFAULT_REGION" >/dev/null
   local cluster service
   cluster=$(aws ecs list-clusters --region "$CDK_DEFAULT_REGION" --query "clusterArns[?contains(@,'argus-platform')]|[0]" --output text)
   # list-services pages at 10 and a --query is applied per page, so list everything and grep.

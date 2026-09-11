@@ -44,6 +44,8 @@ class PlatformAlarms(Construct):
         nat_gateway_ids: list[str],
         web_acl_name: str = "",
         run_metrics: bool = False,
+        user_pool_id: str = "",
+        ais_mode: str = "live",
     ):
         super().__init__(scope, cid)
         self.topic = topic
@@ -105,6 +107,19 @@ class PlatformAlarms(Construct):
                 cw.ComparisonOperator.GREATER_THAN_THRESHOLD,
                 f"targets behind the {label} ALB returned 5xx",
                 periods=2,
+            )
+        # ---- the sign-in itself (I10). A callback URL changed by a redeploy, or a
+        # broken Cognito integration, locks every officer out of the watch floor while
+        # the balancer and its targets stay perfectly healthy, so nothing else pages.
+        if "public" in albs:
+            self.alarm(
+                "argus-alb-auth-errors",
+                albs["public"].metrics.custom(
+                    "ELBAuthError", statistic="Sum", period=five
+                ),
+                10,
+                cw.ComparisonOperator.GREATER_THAN_THRESHOLD,
+                "the public load balancer could not complete a Cognito sign-in",
             )
         if not paused:
             for label, tg in target_groups.items():
@@ -220,6 +235,82 @@ class PlatformAlarms(Construct):
                 "more than two Investigator branches degraded in an hour",
             )
 
+        # ---- the feed itself (I4). The ingest task reconnects forever and stays
+        # RUNNING with a healthy container, so an expired AISStream key or a
+        # subscription that matches nothing silences the feed with nothing to see in
+        # ECS. The task publishes its own age since the last stored position; missing
+        # data breaches, so the alarm also fires when the task stops publishing at all.
+        if not paused:
+            self.alarm(
+                "argus-feed-stalled",
+                cw.Metric(
+                    namespace="Argus/Feed",
+                    metric_name="LastPositionAge",
+                    dimensions_map={"mode": ais_mode},
+                    period=five,
+                    statistic="Maximum",
+                ),
+                900,
+                cw.ComparisonOperator.GREATER_THAN_THRESHOLD,
+                "no AIS position stored for fifteen minutes, or the ingest task stopped reporting",
+                periods=2,
+                missing=cw.TreatMissingData.BREACHING,
+            )
+
+        # ---- officers cannot sign in (I12). Cognito counts sign-in failures per pool;
+        # a burst means the pool, the balancer's authenticate action or the officers'
+        # credentials are broken, and the watch floor is shut out.
+        if user_pool_id:
+            self.alarm(
+                "argus-sign-in-failures",
+                cw.Metric(
+                    namespace="AWS/Cognito",
+                    metric_name="SignInThrottles",
+                    dimensions_map={"UserPool": user_pool_id, "UserPoolClient": "ALL"},
+                    period=five,
+                    statistic="Sum",
+                ),
+                5,
+                cw.ComparisonOperator.GREATER_THAN_THRESHOLD,
+                "Cognito is throttling or refusing sign-ins: officers may be locked out",
+            )
+
+        # ---- a deployment rolled back (I12). The circuit breaker rolls a crash-looping
+        # task back on its own, which is the right behaviour and an invisible one: the
+        # stack reports success and the old task definition keeps serving.
+        if not paused:
+            self.alarm(
+                "argus-deployment-rollbacks",
+                cw.Metric(
+                    namespace="AWS/ECS",
+                    metric_name="ServiceDeploymentsFailed",
+                    dimensions_map={"ClusterName": cluster.cluster_name},
+                    period=Duration.minutes(15),
+                    statistic="Sum",
+                ),
+                0,
+                cw.ComparisonOperator.GREATER_THAN_THRESHOLD,
+                "a service deployment failed and the circuit breaker rolled it back",
+            )
+
+        # ---- sweeps that find nothing (I12). A sweep that raises no alert is normal;
+        # a day of them means the detectors, the tool plane or the feed are broken in a
+        # way that still returns success. Six hours of zero is the signal.
+        if run_metrics and not paused:
+            self.alarm(
+                "argus-sweeps-raising-nothing",
+                cw.Metric(
+                    namespace="Argus/Sweeps",
+                    metric_name="AlertsRaised",
+                    period=Duration.hours(6),
+                    statistic="Sum",
+                ),
+                1,
+                cw.ComparisonOperator.LESS_THAN_THRESHOLD,
+                "no alert raised by any sweep in six hours: check the detectors and the feed",
+                missing=cw.TreatMissingData.BREACHING,
+            )
+
         # ---- eval gate: `node_evals.py --push` publishes gate_passed per suite (0 or 1).
         for suite in EVAL_SUITES:
             self.alarm(
@@ -233,7 +324,10 @@ class PlatformAlarms(Construct):
                 ),
                 1,
                 cw.ComparisonOperator.LESS_THAN_THRESHOLD,
-                f"the latest {suite} eval run missed a floor in evals/thresholds.yaml",
+                f"the latest {suite} eval run missed a floor in evals/thresholds.yaml, "
+                "or no run has reported",
+                # A gate that never ran must not read as a gate that passed (I12).
+                missing=cw.TreatMissingData.BREACHING,
             )
 
     def alarm(

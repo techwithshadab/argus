@@ -180,8 +180,34 @@ def registry_agent_url(name: str) -> str | None:
     return None
 
 
+#: A draft alert nobody reviewed within this many hours leaves the queue (P5). Set
+#: ALERT_EXPIRY_HOURS=0 to keep every draft open forever.
+ALERT_EXPIRY_HOURS = int(os.getenv("ALERT_EXPIRY_HOURS", "72"))
+
+
+def expire_stale_alerts() -> int:
+    """Close drafts nobody reviewed, audited. Never raises: a sweep must still run.
+
+    One day of live sweeps left 131 alerts awaiting review, which is a queue no officer
+    can finish and therefore the same as no queue at all. Expiry is not deletion: the
+    alert stays readable, it just stops being work.
+    """
+    if ALERT_EXPIRY_HOURS <= 0:
+        return 0
+    try:
+        rows = q("SELECT expire_stale_alerts(%s) AS n", (ALERT_EXPIRY_HOURS,))
+        n = int(rows[0]["n"] or 0) if rows else 0
+        if n:
+            log.info("expired %d alert(s) older than %d h", n, ALERT_EXPIRY_HOURS)
+        return n
+    except Exception as e:  # noqa: BLE001
+        log.warning("alert expiry failed: %s", e)
+        return 0
+
+
 def run_sweep(job: dict) -> dict:
     hours = float(job["payload"].get("hours", SWEEP_HOURS))
+    expire_stale_alerts()
     progress(job, "watch", "started", f"sweeping the last {hours:g} h")
     res = send_message(
         watch_url(),
@@ -455,6 +481,11 @@ for _kind in KINDS:
             DEFAULT_TIMEOUTS[_kind] + REAP_GRACE_S,
         )
 _last_reap = 0.0
+_last_requeue = 0.0
+#: A `queued` row older than this with no message behind it is stranded, not merely
+#: waiting. Comfortably longer than a normal queue delay so a healthy job is never
+#: re-sent.
+STRANDED_GRACE_S = int(os.getenv("JOB_STRANDED_GRACE_S", "300"))
 
 
 def reap_orphans() -> int:
@@ -494,6 +525,57 @@ def reap_orphans() -> int:
     return len(rows)
 
 
+def requeue_stranded() -> int:
+    """Re-send jobs that are `queued` in the database but absent from the queue.
+
+    `enqueue`/`open_investigation` commit the job row and only then send its id, so a
+    send that fails (or a message dropped before delivery) strands the row: the worker
+    never sees it, the watch floor shows the investigation queued forever, and — because
+    the idempotency key is only unique across `queued`/`running` — every later request
+    for that vessel dedupes against the stranded row instead of starting work. Thirty of
+    them accumulated over a day before this existed.
+
+    Re-sending is safe: delivery is at-least-once already, so a duplicate message for a
+    row that is genuinely in flight is the case handlers are written for. Only rows older
+    than the grace period are touched, so a job queued seconds ago is left alone.
+    """
+    global _last_requeue
+    if time.time() - _last_requeue < 60:
+        return 0
+    _last_requeue = time.time()
+    # A stranded row keeps `status='queued'` until a worker claims it, so selecting on
+    # status alone re-sent the same ids every minute and buried the queue in duplicates
+    # (129 messages deep before this clause existed). `not_before` cannot be the cooldown:
+    # the claim query refuses a job whose `not_before` is in the future, so stamping it
+    # would block the very rows being rescued. Mark the attempt in `progress` instead,
+    # which is advisory and read by nothing that gates execution.
+    rows = q(
+        """UPDATE jobs
+              SET progress = progress || %s::jsonb, updated_at = now()
+            WHERE id IN (
+              SELECT id FROM jobs
+               WHERE status='queued' AND kind = ANY(%s)
+                 AND created_at < now() - make_interval(secs => %s)
+                 AND NOT (progress @> %s::jsonb)
+               ORDER BY created_at LIMIT 25
+            )
+            RETURNING id""",
+        (
+            json.dumps([{"step": "requeue", "status": "sent"}]),
+            list(KINDS),
+            STRANDED_GRACE_S,
+            json.dumps([{"step": "requeue"}]),
+        ),
+    )
+    for job in rows:
+        try:
+            queue.send(str(job["id"]))
+            log.warning("requeued stranded job %s", job["id"])
+        except Exception as e:  # noqa: BLE001
+            log.warning("could not requeue job %s: %s", job["id"], e)
+    return len(rows)
+
+
 def main() -> None:
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     signal.signal(signal.SIGINT, lambda *_: stop.set())
@@ -516,6 +598,7 @@ def main() -> None:
         try:
             enqueue_sweep_if_due(last_bucket)
             reap_orphans()
+            requeue_stranded()
             queue.promote_delayed()
             inflight = {f for f in inflight if not f.done()}
             free = WORKER_CONCURRENCY - len(inflight)

@@ -3,7 +3,7 @@ status: accepted
 ---
 # The investigation workflow is a code-owned graph, not an LLM-chosen sequence
 
-The Orchestrator was a Strands agent whose system prompt asked it to call the Investigator, then Tasking, then write a report from its own transcript. Order was enforced only by prose, nothing ran in parallel, and the report was a second free-form generation over the whole chat. Decision: the workflow is a graph defined in code (LangGraph or Strands Graph): Investigator branches (identity and sanctions in parallel with behaviour analysis) fan out and join, Tasking runs on the extracted evidence gap, and a report node receives only the validated JSON findings. LLM judgement stays inside nodes; edges, timeouts, retries and escalation are code.
+The Orchestrator was a Strands agent whose system prompt asked it to call the Investigator, then Tasking, then write a report from its own transcript. Order was enforced only by prose, nothing ran in parallel, and the report was a second free-form generation over the whole chat. Decision: the workflow is a graph defined in code (LangGraph, chosen in ADR-0017): Investigator branches (identity and sanctions in parallel with behaviour analysis) fan out and join, Tasking runs on the extracted evidence gap, and a report node receives only the validated JSON findings. LLM judgement stays inside nodes; edges, timeouts, retries and escalation are code.
 
 ## Considered options
 
@@ -12,7 +12,7 @@ The Orchestrator was a Strands agent whose system prompt asked it to call the In
 
 ## As built (phase 4)
 
-`agents/orchestrator/app.py` is the graph: two Investigator branches (`Scope: identity` and `Scope: behaviour`) run in parallel over A2A, are merged by a pure function (`shared/graph.py`: the owning branch wins each field, lists are unioned, confidence is the lower), the Tasking agent receives the extracted evidence gap, and a tool-less report node (strong tier) produces the Vessel of Interest report from the merged findings and tasking JSON only, never from a transcript. The report is checked by `shared/policy.py` (allowed actions, evidence traceability) and retried once with the violations; a second failure fails the investigation. Progress for every node is reported to the platform. The Orchestrator no longer has an LLM in the loop except in the report node.
+`agents/orchestrator/app.py` is the graph: two Investigator branches (`Scope: identity` and `Scope: behaviour`) run in parallel over A2A, are merged by a pure function (`shared/graph.py`: the owning branch wins each field, lists are unioned, confidence is the lower), the Tasking agent receives the extracted evidence gap, and a tool-less report node (strong tier) produces the Vessel of Interest report from the merged findings and tasking JSON only, never from a transcript. The report is checked by `shared/policy.py` (allowed actions, evidence traceability) and retried once with the violations. A hard problem surviving the retry fails the investigation; the one soft problem is accepted with a caveat, and a guardrail block buys a third attempt (ADR-0020). A branch that did not complete caps the report's confidence and priority in code. Progress for every node is reported to the platform. The Orchestrator no longer has an LLM in the loop except in the report node.
 
 ## Consequences
 

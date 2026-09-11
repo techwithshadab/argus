@@ -67,5 +67,8 @@ stop-aws:      ## AWS: scale every service to zero and let Aurora auto-pause (st
 start-aws:     ## AWS: resume a stopped stack
 	PAUSED=false ./scripts/deploy.sh
 
-destroy:       ## AWS: delete all four stacks and garbage-collect bootstrap assets
+destroy:       ## AWS: delete all four stacks (snapshots the database first) and garbage-collect assets
 	./scripts/destroy.sh
+
+destroy-keep-data:  ## AWS: delete the stacks but retain the database and the archive bucket
+	KEEP_DATA=1 ./scripts/destroy.sh

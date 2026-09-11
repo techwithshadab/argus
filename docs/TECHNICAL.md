@@ -20,7 +20,7 @@ observability/     collector, Prometheus (+ alert rules), Tempo, Loki, Grafana d
 docs/              ADRs, roadmap, this reference, API, use cases, runbook, security
 ```
 
-Python 3.12 everywhere; dependencies are exactly pinned in seven per-image `requirements.txt` files; containers install with `uv`, CI with `pip`. Ruff (line length 88) is the only linter and formatter.
+Python 3.12 everywhere; dependencies are exactly pinned across ten `requirements.txt` files, six of them per image; containers install with `uv`, CI with `pip`. Ruff (line length 88) is the only linter and formatter.
 
 ## 2. Services
 
@@ -61,7 +61,7 @@ One image; `MCP_SERVER` selects `ais | registry | geo | imagery`. On AWS each ru
 
 ### 2.6 Replay / ingest (`services/ais-replay/replay.py`, `network.py`)
 
-On start: apply every `data/sql/*.sql` except `000_*` (idempotent), load reference data, encrypt personal data, build the ownership network (entities and edges from registry rows; rendezvous edges from positions with the detector's proximity rule), ensure daily partitions, bulk-load positions, publish the area and ground truth to the `scenario_meta` table (and `/app/shared` locally), then stream positions at `REPLAY_SPEED` and loop (`REPLAY_LOOP`). Live mode subscribes AISStream to the scenario bounding box.
+On start: apply every `data/sql/*.sql` except `000_*` (idempotent), load reference data, encrypt personal data, build the ownership network (entities and edges from registry rows; rendezvous edges from positions with the detector's proximity rule), ensure daily partitions, bulk-load positions, publish the area and ground truth to the `scenario_meta` table (and `/app/shared` locally), then stream positions at `REPLAY_SPEED` and loop (`REPLAY_LOOP`). Live mode subscribes AISStream to the scenario bounding box plus the `data/areas.yaml` regions selected by `WATCH_AREAS` (`all`, `scenario`, or a comma list), all in one subscription; `services/ais-replay/areas.py` is pure and unit-tested, and the resulting list is published as `area.areas` so the watch floor can filter by region. Reports outside the valid coordinate range or at (0, 0) are dropped rather than stored, and a heartbeat task publishes `Argus/Feed` whether or not the socket is connected.
 
 ### 2.7 Archiver (`services/archiver/archive.py`)
 
@@ -163,7 +163,7 @@ Stored in `investigations.manifest` on completion:
 ## 7. Build and deployment
 
 - Local: `cp .env.example .env`, `make up`; `make stop`/`make start`/`make down`. Compose builds per-service images; the shared volume is mounted at `/app/shared` (outputs), never `/app/data`.
-- CI (`.github/workflows/ci.yml`): ruff check and format, unit tests (four packages only), CDK synth, compose config; a second job runs the detector evals against a PostGIS service. `.github/workflows/evals.yml` runs node evals nightly and on prompt or model changes when `EVAL_API_URL` is configured.
+- CI (`.github/workflows/ci.yml`): ruff check and format, unit tests (installing only ruff, pytest, pyyaml and pydantic), a real CDK synth against a committed context fixture, template assertions, compose config, a dependency audit and a container image scan; a second job runs the detector evals against a PostGIS service. `.github/workflows/evals.yml` runs node evals nightly and on prompt or model changes when `EVAL_API_URL` is configured.
 ![Argus technical architecture on AWS with official service icons](diagrams/technical-architecture.png)
 
 - AWS: `make deploy` = `scripts/deploy.sh` (bootstrap, `cdk deploy --all`, `GIT_SHA` baked into agent images; platform images amd64, AgentCore images arm64). The script reads `AIS_MODE`, the feed keys and `OFFICER_EMAIL` / `OFFICER_MFA` from the environment or `.env`, passes the officer settings as CDK context and stores the keys in the stacks' secrets afterwards; synth bundles the certificate-issuer Lambda with Docker. Run it as the `argus-deployer` role through an AWS profile with MFA. `make stop-aws` / `make start-aws` toggle `paused`. `make destroy` = `scripts/destroy.sh` (destroy all stacks, `cdk gc`). `make eval-aws` runs the node evals against the deployment as `argus-operator`; `make rekey-aws` re-keys the personal-data columns.

@@ -12,6 +12,7 @@ from pathlib import Path
 
 from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack
 from aws_cdk import aws_applicationautoscaling as appscaling
+from aws_cdk import aws_budgets as budgets
 from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_ecr_assets as ecr_assets
 from aws_cdk import aws_ecs as ecs
@@ -192,6 +193,11 @@ class PlatformStack(Stack):
         # the operator role (default: any principal in this account).
         officer_email = self.node.try_get_context("officerEmail") or ""
         operator_principal = self.node.try_get_context("operatorPrincipalArn") or ""
+        # Indexing every span costs money for a signal a sample already gives (I13).
+        trace_sampling = max(
+            1, min(100, int(self.node.try_get_context("traceSampling") or 10))
+        )
+        monthly_budget = int(self.node.try_get_context("monthlyBudgetUsd") or 500)
         cluster = ecs.Cluster(
             self,
             "Cluster",
@@ -206,7 +212,10 @@ class PlatformStack(Stack):
             self,
             "Logs",
             log_group_name="/argus/services",
-            retention=logs.RetentionDays.THREE_DAYS,
+            # A month, not three days. Every platform service logs here, the runbook's
+            # own troubleshooting steps say "check the task's logs", and a rolled-back
+            # deployment or a stalled feed may not be noticed over a long weekend (I17).
+            retention=logs.RetentionDays.ONE_MONTH,
             removal_policy=RemovalPolicy.DESTROY,
         )
         # ---- X-Ray Transaction Search, on by default (`-c transactionSearch=false`) ----
@@ -312,7 +321,11 @@ class PlatformStack(Stack):
                     action="updateIndexingRule",
                     parameters={
                         "Name": "Default",
-                        "Rule": {"Probabilistic": {"DesiredSamplingPercentage": 100}},
+                        "Rule": {
+                            "Probabilistic": {
+                                "DesiredSamplingPercentage": trace_sampling
+                            }
+                        },
                     },
                     physical_resource_id=cr.PhysicalResourceId.of(
                         "argus-xray-indexing"
@@ -442,6 +455,11 @@ class PlatformStack(Stack):
         auth_env = {"TOOL_AUTH": "aws-iam", "TOOL_ALLOWED_ACCOUNT": self.account}
         # Operator tooling (evals, demo scripts) calls the API as this role with a caller
         # token: `aws sts assume-role`, then EVAL_AUTH=aws-iam (docs/RUNBOOK.md).
+        # This role may review findings and approve collection requests (ADR-0019), so
+        # its trust matters as much as an officer's sign-in. A named principal is the
+        # right answer; without one the fallback is the account with MFA, matching the
+        # deployer role. Account-wide trust with no second factor let any principal in
+        # the account act as a watch officer (I7).
         operator_role = iam.Role(
             self,
             "Operator",
@@ -449,12 +467,59 @@ class PlatformStack(Stack):
             assumed_by=(
                 iam.ArnPrincipal(operator_principal)
                 if operator_principal
-                else iam.AccountPrincipal(self.account)
+                else iam.AccountPrincipal(self.account).with_conditions(
+                    {"Bool": {"aws:MultiFactorAuthPresent": "true"}}
+                )
             ),
             max_session_duration=Duration.hours(4),
             description="Calls the Argus API with a caller token (evals, scripts)",
         )
         CfnOutput(self, "OperatorRoleArn", value=operator_role.role_arn)
+
+        # ---- CI assumes the operator role through GitHub's OIDC provider, not a key
+        # (I7, I14). The evals workflow held a long-lived access key pair in repository
+        # secrets: a credential that cannot be rotated by the stack, does not expire, and
+        # is enough to review findings. With `-c githubRepo=owner/name` the workflow gets
+        # a short-lived session instead, scoped to this repository's own workflows.
+        github_repo = str(self.node.try_get_context("githubRepo") or "").strip()
+        if github_repo:
+            provider = iam.OpenIdConnectProvider(
+                self,
+                "GithubOidc",
+                url="https://token.actions.githubusercontent.com",
+                client_ids=["sts.amazonaws.com"],
+            )
+            ci_role = iam.Role(
+                self,
+                "CiOperator",
+                role_name="argus-ci-operator",
+                assumed_by=iam.WebIdentityPrincipal(
+                    provider.open_id_connect_provider_arn,
+                    {
+                        "StringEquals": {
+                            "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+                        },
+                        # Only workflows in this repository, not any repository that
+                        # happens to use the same provider.
+                        "StringLike": {
+                            "token.actions.githubusercontent.com:sub": f"repo:{github_repo}:*"
+                        },
+                    },
+                ),
+                max_session_duration=Duration.hours(1),
+                description="GitHub Actions assumes this to run the eval gate",
+            )
+            ci_role.add_to_policy(
+                iam.PolicyStatement(
+                    actions=["sts:AssumeRole"], resources=[operator_role.role_arn]
+                )
+            )
+            operator_role.assume_role_policy.add_statements(
+                iam.PolicyStatement(
+                    actions=["sts:AssumeRole"], principals=[ci_role.grant_principal]
+                )
+            )
+            CfnOutput(self, "CiRoleArn", value=ci_role.role_arn)
 
         # ---- durable jobs (phase 3, ADR-0016): one SQS queue per job kind, each with a
         # dead-letter queue. Sweeps and investigations have different durations and a
@@ -544,6 +609,7 @@ class PlatformStack(Stack):
             health="/health",
             extra_sgs: list | None = None,
             certificates: list | None = None,
+            replicas: int = 1,
         ):
             td = ecs.FargateTaskDefinition(
                 self,
@@ -585,7 +651,7 @@ class PlatformStack(Stack):
                 f"Svc{name}",
                 cluster=cluster,
                 task_definition=td,
-                desired_count=desired,
+                desired_count=0 if paused else replicas,
                 security_groups=[services_sg, *(extra_sgs or [])],
                 vpc_subnets=ec2.SubnetSelection(
                     subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS
@@ -600,7 +666,13 @@ class PlatformStack(Stack):
                         )
                     ]
                 ),
-                min_healthy_percent=0,
+                # A service that carries traffic keeps a healthy task through a deploy
+                # and a rollback (I3). At 0% every deploy stopped the last task before
+                # starting the new one, so the API, the UI and the collector went down
+                # on every routine deploy and the `*-down` alarms paged for it. Single
+                # -task services (the replay ingest, which must not double-write, and
+                # the workers, which drain their own queue) keep the old behaviour.
+                min_healthy_percent=100 if replicas > 1 else 0,
                 max_healthy_percent=200,
                 circuit_breaker=ecs.DeploymentCircuitBreaker(rollback=True),
             )
@@ -657,6 +729,57 @@ class PlatformStack(Stack):
         if email:
             topic.add_subscription(subs.EmailSubscription(email))
 
+        # ---- cost (I13). Nothing in the stack noticed spend until the bill arrived, and
+        # this deployment idles at roughly $400 a month with the consoles running. A
+        # budget with forecast and actual notifications is the cheapest guard there is:
+        # it costs nothing and it fires before the month ends, not after. Budgets are a
+        # global (us-east-1) service and notify SNS directly, so the topic needs an allow
+        # for the budgets principal. `-c monthlyBudgetUsd=0` switches it off.
+        if monthly_budget > 0:
+            topic.add_to_resource_policy(
+                iam.PolicyStatement(
+                    sid="AllowBudgets",
+                    principals=[iam.ServicePrincipal("budgets.amazonaws.com")],
+                    actions=["sns:Publish"],
+                    resources=[topic.topic_arn],
+                    conditions={"StringEquals": {"aws:SourceAccount": self.account}},
+                )
+            )
+            budgets.CfnBudget(
+                self,
+                "MonthlyBudget",
+                budget=budgets.CfnBudget.BudgetDataProperty(
+                    budget_name="argus-monthly",
+                    budget_type="COST",
+                    time_unit="MONTHLY",
+                    budget_limit=budgets.CfnBudget.SpendProperty(
+                        amount=monthly_budget, unit="USD"
+                    ),
+                ),
+                notifications_with_subscribers=[
+                    budgets.CfnBudget.NotificationWithSubscribersProperty(
+                        notification=budgets.CfnBudget.NotificationProperty(
+                            comparison_operator="GREATER_THAN",
+                            notification_type=kind,
+                            threshold=threshold,
+                            threshold_type="PERCENTAGE",
+                        ),
+                        subscribers=[
+                            budgets.CfnBudget.SubscriberProperty(
+                                address=topic.topic_arn, subscription_type="SNS"
+                            )
+                        ],
+                    )
+                    # Half the budget spent is a note; the whole of it forecast is a
+                    # warning that arrives while the month can still be changed.
+                    for kind, threshold in (
+                        ("ACTUAL", 50),
+                        ("ACTUAL", 90),
+                        ("FORECASTED", 100),
+                    )
+                ],
+            )
+
         # Consoles behind the public ALB (Grafana) need a group this stack may edit:
         # the services group is an immutable import, so rules added to it are dropped silently.
         consoles_sg = ec2.SecurityGroup(
@@ -699,6 +822,11 @@ class PlatformStack(Stack):
             )
             obs_fs.grant_read_write(obs_td.task_role)
             # Grafana's CloudWatch datasource and its SNS contact point use the task role.
+            # Split three ways on purpose (I11). Grafana could query every log group in
+            # the account; only StartQuery can be scoped, because CloudWatch Logs
+            # matches GetQueryResults and StopQuery by query id and DescribeLogGroups by
+            # nothing at all. Scoping those would break every Logs panel at query time
+            # rather than at deploy time.
             obs_td.task_role.add_to_policy(
                 iam.PolicyStatement(
                     actions=[
@@ -707,13 +835,27 @@ class PlatformStack(Stack):
                         "cloudwatch:GetMetricStatistics",
                         "cloudwatch:DescribeAlarms",
                         "logs:DescribeLogGroups",
-                        "logs:StartQuery",
-                        "logs:GetQueryResults",
-                        "logs:StopQuery",
                         "ec2:DescribeRegions",
                         "tag:GetResources",
                     ],
                     resources=["*"],
+                )
+            )
+            obs_td.task_role.add_to_policy(
+                iam.PolicyStatement(
+                    actions=["logs:StartQuery"],
+                    resources=[
+                        f"arn:aws:logs:{self.region}:{self.account}:log-group:/argus/*",
+                        f"arn:aws:logs:{self.region}:{self.account}:log-group:/argus/*:*",
+                        f"arn:aws:logs:{self.region}:{self.account}:log-group:/aws/bedrock-agentcore/*",
+                        f"arn:aws:logs:{self.region}:{self.account}:log-group:/aws/bedrock-agentcore/*:*",
+                    ],
+                )
+            )
+            obs_td.task_role.add_to_policy(
+                iam.PolicyStatement(
+                    actions=["logs:GetQueryResults", "logs:StopQuery"],
+                    resources=["*"],  # matched by query id, not by log group
                 )
             )
             topic.grant_publish(obs_td.task_role)
@@ -972,8 +1114,12 @@ class PlatformStack(Stack):
         )
         col_td.add_container(
             "app",
-            image=ecs.ContainerImage.from_registry(
-                "otel/opentelemetry-collector-contrib:0.128.0"  # same as compose
+            # Built as an asset, not pulled from Docker Hub at every task start: every
+            # service depends on the collector by name, so a rate limit there stopped
+            # the whole platform from starting (I18). The Dockerfile copies nothing, so
+            # its keep list is empty and its hash never moves with unrelated edits.
+            image=ecs.ContainerImage.from_docker_image_asset(
+                img("Collector", "services/observability/Dockerfile.collector", [])
             ),
             command=["--config=env:OTEL_CONFIG"],
             environment={
@@ -994,8 +1140,11 @@ class PlatformStack(Stack):
             "SvcCollector",
             cluster=cluster,
             task_definition=col_td,
-            desired_count=desired,
-            min_healthy_percent=0,
+            # Every service exports telemetry here and depends on it by name, so a
+            # collector that drops to zero loses spans from the whole platform for
+            # the length of a deploy (I3).
+            desired_count=0 if paused else 2,
+            min_healthy_percent=100,
             max_healthy_percent=200,
             circuit_breaker=ecs.DeploymentCircuitBreaker(rollback=True),
             security_groups=[services_sg],
@@ -1040,18 +1189,28 @@ class PlatformStack(Stack):
                 **data_key_env,
                 **job_env,
                 "AUTO_INVESTIGATE_SEVERITIES": auto_investigate,
+                # Two allowlists, not one (ADR-0019): the agent roles reach the
+                # agent-only routes, and only the operator role may take an officer
+                # action. A single list let the orchestrator approve its own tasking.
                 "TOOL_ALLOWED_ROLES": (
                     "argus-agent-watch,argus-agent-orchestrator,argus-operator"
                 ),
+                "AGENT_ALLOWED_ROLES": "argus-agent-watch,argus-agent-orchestrator",
+                "OFFICER_ALLOWED_ROLES": "argus-operator",
                 # The public ALB signs officers in; the API verifies its id token.
                 "OFFICER_AUTH": "oidc",
                 "OIDC_SIGNER": public_alb.load_balancer_arn,
                 "OIDC_ISSUER": sign_in.pool.user_pool_provider_url,
+                # /health and /metrics answer 404 to this host and to it alone: the
+                # collector scrapes the API through the *internal* balancer, so an
+                # x-forwarded-for check would have blocked it too (it did).
+                "PUBLIC_HOST": public_alb.load_balancer_dns_name,
                 "GIT_SHA": os.getenv("GIT_SHA", "unknown"),
             },
             db_secret,
             internal_port=8000,
             certificates=internal_certs,
+            replicas=2,
         )
         # The officer's verdict becomes a CloudWatch metric next to the evaluation scores.
         api_td.task_role.add_to_policy(
@@ -1210,7 +1369,7 @@ class PlatformStack(Stack):
             replay_secrets["AISSTREAM_API_KEY"] = ecs.Secret.from_secrets_manager(
                 feed_secret("AisStreamKey", "AISStream API key for live AIS ingest")
             )
-        _, replay_svc = service(
+        replay_td, replay_svc = service(
             "ais-replay",
             replay_image,
             8000,
@@ -1226,6 +1385,12 @@ class PlatformStack(Stack):
             replay_secrets,
             cpu=256,
             mem=512,
+        )
+        # The ingest task reports on itself (Argus/Feed): the alarm on LastPositionAge is
+        # the only signal that catches an expired feed key or a stalled subscription,
+        # because the task stays RUNNING and healthy either way (I4).
+        replay_td.task_role.add_to_policy(
+            iam.PolicyStatement(actions=["cloudwatch:PutMetricData"], resources=["*"])
         )
 
         # The replay task creates the consoles' databases at start; they migrate them. Tasks
@@ -1282,15 +1447,26 @@ class PlatformStack(Stack):
         )
 
         # ---- UI on a public ALB ----
+        # The UI container listens on 8080, not 80: it runs as a non-root user and a
+        # non-root process cannot bind a privileged port (I20). The balancer's own
+        # listeners are unchanged.
         _, ui_svc = service(
-            "ui", ui_image, 80, {}, cpu=256, mem=512, health="/", extra_sgs=[ui_sg]
+            "ui",
+            ui_image,
+            8080,
+            {},
+            cpu=256,
+            mem=512,
+            health="/",
+            extra_sgs=[ui_sg],
+            replicas=2,
         )
         # nginx resolves `api` through Service Connect at start, and Service Connect only
         # injects names of services that existed when the task started.
         ui_svc.node.add_dependency(api_svc)
         ui_sg.add_ingress_rule(
             public_alb.connections.security_groups[0],
-            ec2.Port.tcp(80),
+            ec2.Port.tcp(8080),
             "public ALB to UI",
         )
         allowed = ec2.Peer.ipv4(ui_cidr)
@@ -1309,7 +1485,7 @@ class PlatformStack(Stack):
             http,
             "UiGroup",
             vpc=vpc,
-            port=80,
+            port=8080,
             protocol=elbv2.ApplicationProtocol.HTTP,
             targets=[ui_svc],
             health_check=elbv2.HealthCheck(path="/"),
@@ -1384,6 +1560,8 @@ class PlatformStack(Stack):
             nat_gateway_ids=nat_gateway_ids,
             web_acl_name=web_acl.name,
             run_metrics=True,
+            user_pool_id=sign_in.pool.user_pool_id,
+            ais_mode=ais_mode,
         )
         CfnOutput(self, "AlarmCount", value=str(len(alarms.names)))
 

@@ -13,9 +13,11 @@ from shared.config import (  # noqa: E402
 )
 from shared.graph import (  # noqa: E402
     evidence_gap,
+    findings_payload,
     known_sources,
     merge_findings,
     report_material,
+    unwrap_schema_shape,
 )
 from shared.policy import check_actions, validate_report  # noqa: E402
 from shared.schemas import Evidence, InvestigationFindings  # noqa: E402
@@ -149,4 +151,86 @@ def test_evidence_gap_and_sources_and_material():
         "Investigation findings (JSON)" in mat
         and "prior note" in mat
         and '"x": 1' not in mat
+    )
+
+
+# ---- the model echoing the schema instead of answering ----
+def test_an_echoed_schema_property_is_not_taken_as_an_answer():
+    """Nova Lite returned `{"title": "Mmsi", "type": "integer"}` for `mmsi` — the
+    schema's own property definition rather than a value. `setdefault` then left it in
+    place, pydantic rejected it, and the behaviour branch failed about 300 times an hour,
+    capping the confidence of every report that survived."""
+    out = unwrap_schema_shape(
+        {"assessment": "text", "mmsi": {"title": "Mmsi", "type": "integer"}},
+        "assessment",
+    )
+    assert "mmsi" not in out
+
+
+def test_a_real_dict_field_is_kept():
+    """Only dicts made entirely of schema vocabulary are dropped; `provenance` is a
+    legitimate object and must survive."""
+    out = unwrap_schema_shape(
+        {"assessment": "text", "provenance": {"tool": "ais.x", "ts": "now"}},
+        "assessment",
+    )
+    assert out["provenance"] == {"tool": "ais.x", "ts": "now"}
+
+
+def test_the_callers_mmsi_wins():
+    """The orchestrator passes the vessel it is investigating, so a model-supplied mmsi
+    is at best redundant and at worst a different ship."""
+    out = findings_payload(
+        {"assessment": "t", "mmsi": 999888777}, 374044000, "behaviour"
+    )
+    assert out["mmsi"] == 374044000
+    out = findings_payload(
+        {"assessment": "t", "mmsi": {"title": "Mmsi", "type": "integer"}},
+        374044000,
+        "behaviour",
+    )
+    assert out["mmsi"] == 374044000
+
+
+def test_a_description_that_carries_the_answer_is_kept():
+    """Narrowing the schema-echo drop: a report writer that answers
+    {"headline": {"title": "Headline", "description": "ARA went dark"}} is clumsy but it
+    did answer. Dropping that key cost the whole report -- every required field vanished
+    at once, validate_report rejected it, the node retried, failed again, and the
+    orchestrator restarted the graph in a loop (31 progress steps on one job)."""
+    out = unwrap_schema_shape(
+        {"headline": {"title": "Headline", "description": "ARA went dark"}}, "headline"
+    )
+    assert out["headline"] == "ARA went dark"
+    out = unwrap_schema_shape(
+        {"headline": {"description": "ARA went dark"}}, "headline"
+    )
+    assert out["headline"] == "ARA went dark"
+
+
+def test_an_empty_description_is_still_just_schema():
+    out = unwrap_schema_shape(
+        {"headline": {"title": "Headline", "description": ""}, "priority": "medium"},
+        "headline",
+    )
+    assert "headline" not in out
+
+
+def test_the_sensor_vocabulary_matches_the_imagery_server():
+    """`check_aoi` validated the Tasking agent's sensor against ("sar", "optical") while
+    the imagery server documents and accepts sentinel-1-sar, sentinel-2-optical,
+    commercial-sar and patrol-aircraft. The agent used the tool's names, so *every*
+    recommendation was rejected ("sensor 'sentinel-1-sar' is not one of sar, optical"),
+    the orchestrator dropped the proposal, and every report said no imagery was proposed
+    while the map showed sentinel-1-sar tasking markers. The server is authoritative."""
+    import re
+    from pathlib import Path
+
+    def sensors(path: str) -> tuple[str, ...]:
+        src = (Path(__file__).resolve().parents[1] / path).read_text()
+        body = re.search(r"SENSORS = \(([^)]*)\)", src, re.S).group(1)
+        return tuple(x.strip().strip("\"'") for x in body.split(",") if x.strip())
+
+    assert sensors("agents/shared/graph.py") == sensors(
+        "mcp-servers/servers/imagery.py"
     )

@@ -79,7 +79,7 @@
 <div class="tbl" style="left:1260px;top:276px;width:260px;height:105px"><div class="th"><b>eval_runs</b><i>scores</i></div><div class="tc">suite · scores · passed<br>code_revision · prompt hashes</div><div class="tn">feeds the eval-gate rule and alarm</div></div>
 <div class="tbl" style="left:1590px;top:128px;width:260px;height:118px"><div class="th"><b>audit_events</b><i>append-only</i></div><div class="tc">ts · actor · actor_kind · action<br>entity_kind · entity_id · details</div><div class="tn">a trigger rejects UPDATE and DELETE; every API state change writes one row, agents included; never pruned</div></div>
 <div class="tbl" style="left:1590px;top:276px;width:260px;height:105px"><div class="th"><b>retention_policy</b><i>classes</i></div><div class="tc">positions · 90 days hot, then Parquet<br>findings · audit · evidence · 7 years</div></div>
-<div class="tbl" style="left:1590px;top:411px;width:260px;height:88px"><div class="th"><b>schema</b><i><span data-count="migrations">9</span> idempotent migrations</i></div><div class="tc">data/sql/001 … 009 · IF NOT EXISTS</div><div class="tn">applied by the replay task on every start, locally and on Aurora</div></div>
+<div class="tbl" style="left:1590px;top:411px;width:260px;height:88px"><div class="th"><b>schema</b><i><span data-count="migrations">10</span> idempotent migrations</i></div><div class="tc">data/sql/001 … 010 · IF NOT EXISTS</div><div class="tn">applied by the replay task on every start, locally and on Aurora</div></div>
 <div class="grp" style="left:40px;top:104px;width:590px;height:409px"></div>
 <div class="glab" style="left:50px;top:96px"><img src="icons/aws/database.svg" alt="">What the feeds said</div>
 <div class="grp" style="left:660px;top:104px;width:880px;height:291px"></div>

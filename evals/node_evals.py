@@ -328,8 +328,30 @@ def suite_report(api: str, cfg: dict, judge_model: str, region: str) -> dict:
         )
         ok = job["status"] == "succeeded" and inv.get("status") == "complete"
         rep = inv.get("report") or {}
+        # The sources the specialists actually cited, from the evidence the platform
+        # froze for this case. Passing an empty set made `check_evidence` skip the
+        # traceability check entirely, so the report suite never scored it (A6).
+        sources: set[str] = set()
+        if ok:
+            try:
+                sources = {
+                    (row.get("source") or "").strip()
+                    for row in http()
+                    .get(
+                        f"{api}/evidence",
+                        params={
+                            "entity_kind": "investigation",
+                            "entity_id": r["investigation_id"],
+                        },
+                        timeout=30,
+                    )
+                    .json()
+                    if (row.get("source") or "").strip()
+                }
+            except Exception as e:  # noqa: BLE001
+                print(f"  evidence unavailable for {case['name']}: {e}")
         problems = (
-            validate_report(rep, set()) if ok else ["investigation did not complete"]
+            validate_report(rep, sources) if ok else ["investigation did not complete"]
         )
         scores = judge(rep, judge_model, region) if ok else None
         rubric = rubric_average(scores)

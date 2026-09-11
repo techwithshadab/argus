@@ -76,10 +76,32 @@ def overlap(a0, a1, b0, b1) -> bool:
     return f(a0) <= f(b1) and f(b0) <= f(a1)
 
 
+def raised_since(alerts: list[dict], since: str | None) -> list[dict]:
+    """Only the alerts raised at or after `since` (an ISO timestamp), or all of them.
+
+    The gate used to score every alert the deployment had ever raised, so a stack that
+    had been running for a week was judged on a week of accumulated alerts rather than
+    on the sweep just run. Recall then drifted up as old alerts accumulated and the
+    gate stopped measuring the change under test (gap audit P12).
+    """
+    if not since:
+        return list(alerts)
+    return [a for a in alerts if str(a.get("created_at") or "") >= since]
+
+
 def score(truth: list[dict], alerts: list[dict]) -> dict:
+    """Recall and precision of a sweep against the scenario's labelled anomalies.
+
+    Precision counts each matching alert once, not each matched truth item: raising the
+    same anomaly five times used to score exactly as well as raising it once, because
+    the matched set was keyed on the alert index but divided into the count of scored
+    alerts only through distinct matches. A duplicate is a false alarm from the
+    officer's side of the desk, so it costs precision here too (gap audit P12).
+    """
     matched, hits = set(), []
+    # One alert per truth item is a hit; the rest are duplicates.
     for t in truth:
-        ok = False
+        found: list[int] = []
         for i, a in enumerate(alerts):
             parties = {t["mmsi"], (t.get("details") or {}).get("with_mmsi")}
             if (
@@ -91,8 +113,17 @@ def score(truth: list[dict], alerts: list[dict]) -> dict:
                     t["started_at"], t["ended_at"], a["started_at"], a["ended_at"]
                 )
             ):
-                ok, _ = True, matched.add(i)
-        hits.append({"mmsi": t["mmsi"], "kind": t["kind"], "detected": ok})
+                found.append(i)
+        if found:
+            matched.add(found[0])
+        hits.append(
+            {
+                "mmsi": t["mmsi"],
+                "kind": t["kind"],
+                "detected": bool(found),
+                "duplicates": max(0, len(found) - 1),
+            }
+        )
     recall = sum(h["detected"] for h in hits) / max(len(truth), 1)
     # Precision counts false alarms among the kinds the scenario labels. An alert of a kind
     # the ground truth does not enumerate (a zone incursion in a scenario that only labels
@@ -100,6 +131,7 @@ def score(truth: list[dict], alerts: list[dict]) -> dict:
     scored_kinds = {t["kind"] for t in truth}
     scored = [i for i, a in enumerate(alerts) if a["kind"] in scored_kinds]
     precision = len(matched) / max(len(scored), 1)
+    duplicates = sum(h["duplicates"] for h in hits)
     by_kind = {
         k: sum(h["detected"] for h in hits if h["kind"] == k)
         / max(sum(1 for h in hits if h["kind"] == k), 1)
@@ -110,6 +142,7 @@ def score(truth: list[dict], alerts: list[dict]) -> dict:
         "precision": round(precision, 3),
         "recall_by_kind": by_kind,
         "alerts": len(alerts),
+        "duplicates": duplicates,
         "unscored": len(alerts) - len(scored),
         "truth": len(truth),
         "details": hits,

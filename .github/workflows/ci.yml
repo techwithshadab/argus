@@ -14,13 +14,53 @@ jobs:
       - run: ruff format --check .
       - run: pytest -q -m "not integration"
       - name: cdk synth
-        env: {CDK_DEFAULT_ACCOUNT: "123456789012", CDK_DEFAULT_REGION: us-east-1}
+        # A real gate, not `|| true`. The environment lookups (availability zones, the S3
+        # prefix list) are the only thing that needed credentials, so they are committed
+        # as a fixture for the CI account; an infrastructure regression now fails here
+        # instead of landing silently and failing at deploy time.
+        env:
+          CDK_DEFAULT_ACCOUNT: "123456789012"
+          CDK_DEFAULT_REGION: us-east-1
+          AWS_ACCESS_KEY_ID: testing
+          AWS_SECRET_ACCESS_KEY: testing
         run: |
           pip install -r infra/cdk/requirements.txt
           npm install -g aws-cdk@2
-          cd infra/cdk && cdk synth --all -q || true   # AZ lookup needs credentials; templates still render
+          cp infra/cdk/cdk.context.ci.json infra/cdk/cdk.context.json
+          cd infra/cdk && cdk synth --all -q
+      - name: template assertions
+        run: pytest -q tests/test_templates.py
       - name: compose config
         run: docker compose config -q
+
+      # Dependencies are `==` pinned across seven requirements files, so a known
+      # vulnerability stays until someone looks. This looks on every push.
+      - name: pip-audit
+        run: |
+          pip install pip-audit==2.9.0
+          for f in $(git ls-files '*requirements*.txt'); do
+            echo "::group::$f"
+            pip-audit -r "$f" --strict || echo "::warning::pip-audit findings in $f"
+            echo "::endgroup::"
+          done
+
+  # Container images: build one and scan it. The images go to the CDK bootstrap ECR
+  # repository, which this project does not own, so scan-on-push cannot be set from the
+  # stack; scanning the built image here catches the same thing before it is pushed.
+  image-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build the API image
+        run: docker build -f services/api/Dockerfile -t argus-api:ci .
+      - name: scan for known vulnerabilities
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: argus-api:ci
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "0"   # report first; make it blocking once the baseline is clean
 
   # Deterministic detector evals against a real PostGIS (phase 5). No model involved.
   detectors:

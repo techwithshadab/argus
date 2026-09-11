@@ -98,6 +98,8 @@ def candidates_from(
                     + f"; last known {g.get('last_lat')},{g.get('last_lon')}"
                 ),
                 "source": "ais.find_ais_gaps",
+                "lat": g.get("last_lat"),
+                "lon": g.get("last_lon"),
             }
         )
     for g in gaps.get("still_dark") or []:
@@ -113,6 +115,8 @@ def candidates_from(
                     f"minutes; last known {g.get('last_lat')},{g.get('last_lon')}"
                 ),
                 "source": "ais.find_ais_gaps",
+                "lat": g.get("last_lat"),
+                "lon": g.get("last_lon"),
             }
         )
     for c in (detectors.get("conflicts") or {}).get("conflicts") or []:
@@ -151,6 +155,8 @@ def candidates_from(
                     + (f", inside {zones}" if zones else ", no declared zone")
                 ),
                 "source": "ais.detect_loitering",
+                "lat": r.get("lat"),
+                "lon": r.get("lon"),
             }
         )
     for r in (detectors.get("rendezvous") or {}).get("rendezvous") or []:
@@ -180,6 +186,8 @@ def candidates_from(
                     )
                 ),
                 "source": "ais.detect_rendezvous",
+                "lat": r.get("lat"),
+                "lon": r.get("lon"),
             }
         )
     for r in (detectors.get("incursions") or {}).get("incursions") or []:
@@ -195,6 +203,8 @@ def candidates_from(
                     f"average {r.get('avg_sog')} kn"
                 ),
                 "source": "ais.list_zone_incursions",
+                "lat": r.get("lat"),
+                "lon": r.get("lon"),
             }
         )
     out.sort(
@@ -237,6 +247,14 @@ def render_candidates(cands: list[dict]) -> list[dict]:
             "name": c.get("name"),
             "window": [c["started_at"], c["ended_at"]],
             "summary": c["summary"],
+            # The prompt asks the model to call `point_in_zones`, which needs a
+            # position. Loitering, rendezvous and incursion candidates carried none, so
+            # the model either skipped the zone check or invented coordinates (A5).
+            **(
+                {"lat": round(float(c["lat"]), 4), "lon": round(float(c["lon"]), 4)}
+                if c.get("lat") is not None and c.get("lon") is not None
+                else {}
+            ),
             **({"partner_mmsi": c["partner_mmsi"]} if c.get("partner_mmsi") else {}),
         }
         for c in cands
@@ -256,3 +274,71 @@ def non_dismissible(c: dict) -> str | None:
             "transfer signature; raise it with the severity you judge"
         )
     return None
+
+
+def alert_evidence(candidate: dict, extra: list | None) -> list[dict]:
+    """The evidence list for an alert: the candidate's own entry first, then whatever the
+    model added, canonicalised and cleaned.
+
+    The model sees tools under the name its transport uses. Through the AgentCore gateway
+    that is `geo___point_in_zones`, so alerts on AWS cited a form no officer recognises and
+    no scorer keyed on `server.tool` could match, while the same sweep run locally cited the
+    dotted form. Canonicalising here, rather than in the tool wrapper, keeps it pure and
+    testable, and lets malformed entries be dropped instead of stored.
+    """
+    from .tools import canonical_source
+
+    out = list(candidate.get("evidence") or [])
+    seen = {(e.get("source"), e.get("reference")) for e in out if isinstance(e, dict)}
+    for e in extra or []:
+        if not isinstance(e, dict):
+            continue
+        source = canonical_source(str(e.get("source") or "").strip())
+        summary = str(e.get("summary") or "").strip()
+        if not source or not summary:
+            # An entry without a source or a summary cites nothing an officer can follow.
+            continue
+        reference = e.get("reference")
+        reference = str(reference).strip() if reference else None
+        key = (source, reference)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(
+            {"source": source, "summary": summary}
+            | ({"reference": reference} if reference else {})
+        )
+    return out
+
+
+#: The detectors a sweep depends on. `open_alerts` is a sixth call and its failure
+#: only disables dedup, so it is not one of these.
+DETECTOR_KEYS = ("gaps", "conflicts", "loitering", "rendezvous", "incursions")
+#: Candidate entries older than this are dropped from the Watch runtime's caches.
+CANDIDATE_TTL_S = 3600.0
+
+
+def sweep_failure(failed: list[str]) -> str | None:
+    """Why this sweep must fail rather than report nothing, or None.
+
+    A denied Cedar policy, a SQL error or a gateway refusal came back as an error
+    result that nothing read, so the detector's output became `{}` and the sweep
+    reported zero candidates exactly as a quiet watch does. Every detector failing is
+    a broken sweep, not a calm sea, and it must fail loudly so the job is retried and
+    the alarm fires (A4).
+    """
+    broken = [k for k in failed if k in DETECTOR_KEYS]
+    if len(broken) == len(DETECTOR_KEYS):
+        return "every detector failed: " + ", ".join(sorted(broken))
+    return None
+
+
+def expired_candidates(
+    stamps: dict[str, float], now: float, ttl: float = CANDIDATE_TTL_S
+) -> list[str]:
+    """Candidate ids stamped more than `ttl` ago.
+
+    The Watch runtime is long-lived on AgentCore and every sweep mints fresh ids, so
+    nothing is ever overwritten and the caches grew for the life of the process (A11).
+    """
+    return [cid for cid, ts in stamps.items() if now - ts > ttl]

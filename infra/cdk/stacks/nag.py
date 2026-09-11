@@ -69,8 +69,9 @@ def data(stack: Stack) -> None:
         [
             _s(
                 "AwsSolutions-RDS10",
-                "Deletion protection follows -c retainData: off on a demo stack so "
-                "`make destroy` can remove the cluster, on when the data is kept.",
+                "Deletion protection follows -c retainData, which defaults to true: "
+                "`scripts/destroy.sh` passes retainData=false explicitly and "
+                "snapshots the cluster first (docs/GAPS.md I1).",
             )
         ],
     )
@@ -119,6 +120,24 @@ def data(stack: Stack) -> None:
         ],
     )
 
+    NagSuppressions.add_stack_suppressions(
+        stack,
+        [
+            _s(
+                "AwsSolutions-IAM4",
+                "AWS Backup's own service role policy, attached by the BackupPlan "
+                "construct. It grants the backup service the read and snapshot rights "
+                "it needs on the resources the plan selects, and there is no "
+                "customer-managed equivalent (I2).",
+                applies_to=[
+                    _rx(
+                        r"^Policy::arn:.*iam::aws:policy/service-role/AWSBackupServiceRolePolicy.*$"
+                    )
+                ],
+            )
+        ],
+    )
+
 
 def platform(stack: Stack, *, grafana: bool) -> None:
     _path(
@@ -154,8 +173,9 @@ def platform(stack: Stack, *, grafana: bool) -> None:
             ),
             _s(
                 "AwsSolutions-COG2",
-                "MFA is optional by default (officers enrol TOTP themselves) and required "
-                "with -c officerMfa=required.",
+                "MFA is optional by default so enabling it cannot lock out an officer who "
+                "has not yet enrolled an authenticator; -c officerMfa=required "
+                "enforces TOTP enrolment at the next sign-in (I10).",
             ),
         ],
     )
@@ -220,6 +240,20 @@ def platform(stack: Stack, *, grafana: bool) -> None:
                 "reads (observability task), the X-Ray account-settings custom resources, "
                 "and acm:ImportCertificate whose ARN exists only after the call.",
                 applies_to=["Resource::*"],
+            ),
+            _s(
+                "AwsSolutions-IAM5",
+                "A log group prefix is the narrowest form CloudWatch Logs offers, and "
+                "these are narrower than the `Resource::*` they replaced: Grafana may "
+                "start a query only against this deployment's own groups, and the "
+                "retention custom resources touch only the groups AgentCore creates "
+                "(I11). The `:*` variants are the same groups' log streams.",
+                applies_to=[
+                    _rx(r"^Resource::arn:aws:logs:.*:log-group:/argus/\*:?\*?$"),
+                    _rx(
+                        r"^Resource::arn:aws:logs:.*:log-group:/aws/bedrock-agentcore/\*:?\*?$"
+                    ),
+                ],
             ),
             _s(
                 "AwsSolutions-IAM5",

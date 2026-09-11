@@ -23,14 +23,26 @@ class NetworkStack(Stack):
     def __init__(self, scope: Construct, cid: str, **kw):
         super().__init__(scope, cid, **kw)
         # One NAT gateway per zone (default) so a zone loss does not take the feeds and
-        # image pulls of the other zone with it; -c natPerAz=false keeps a single one
-        # (about $33/month less, including while paused).
+        # image pulls of the other zones with it; -c natPerAz=false keeps a single one
+        # (about $33/month per zone less, including while paused).
         per_az = str(self.node.try_get_context("natPerAz") or "true").lower() != "false"
+        # `-c maxAzs=3` spreads the agents across zones, and they need it: AgentCore
+        # supports only some zones, `agentcoreZoneIds` names three of them by zone id,
+        # and zone ids are shuffled per account, so the intersection of "the two zone
+        # names CDK picked" with "the three names those ids resolve to" is frequently a
+        # single zone (I5).
+        #
+        # It defaults to 2 because subnet CIDRs are allocated per zone in order, so
+        # raising it renumbers them and **replaces the existing agent subnets**.
+        # AgentCore's managed network interfaces pin those subnets, and a failed
+        # replacement has already left one undeletable VPC in this account. Take the
+        # third zone on a fresh VPC (destroy and redeploy), never on a running one.
+        azs = int(self.node.try_get_context("maxAzs") or 2)
         self.vpc = ec2.Vpc(
             self,
             "Vpc",
-            max_azs=2,
-            nat_gateways=2 if per_az else 1,
+            max_azs=azs,
+            nat_gateways=azs if per_az else 1,
             subnet_configuration=[
                 ec2.SubnetConfiguration(
                     name="public", subnet_type=ec2.SubnetType.PUBLIC, cidr_mask=24

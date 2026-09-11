@@ -6,14 +6,28 @@ else (tasking requests) is written to the database for a human to approve."""
 
 from __future__ import annotations
 
+import math
 import os
 from datetime import UTC, datetime, timedelta
 
 import httpx
 from common.db import q
+from common.safety import untrusted
 from common.telemetry import traced_tool
 from mcp.server.fastmcp import FastMCP
 from psycopg.types.json import Jsonb
+
+#: The scenario clock, exactly as the ais server reads it. Pass estimates were
+#: measured from the wall clock while every other timestamp in an investigation came
+#: from the scenario's end, so the "next pass" landed months from the case (A7).
+SCENARIO_END = os.getenv("SCENARIO_END", "2026-09-01T08:00:00Z")
+
+
+def scenario_now() -> datetime:
+    if os.getenv("AIS_MODE", "replay").strip().lower() == "live":
+        return datetime.now(UTC)
+    return datetime.fromisoformat(SCENARIO_END.replace("Z", "+00:00"))
+
 
 mcp = FastMCP(
     "imagery",
@@ -64,10 +78,13 @@ def search_sentinel_scenes(
             timeout=30,
         )
         r.raise_for_status()
+        # Copernicus scene names and ids are external free text reaching the model
+        # (CLAUDE.md: anything from an external source goes through untrusted()). The
+        # synthetic fallback below is locally generated and is not wrapped (A8).
         scenes = [
             {
-                "id": p["Id"],
-                "name": p["Name"],
+                "id": untrusted(p["Id"], "copernicus"),
+                "name": untrusted(p["Name"], "copernicus"),
                 "sensed": p["ContentDate"]["Start"],
                 "size_mb": round(p.get("ContentLength", 0) / 1e6, 1),
                 "browse_url": f"https://browser.dataspace.copernicus.eu/?zoom=9&lat={lat}&lng={lon}",
@@ -82,8 +99,9 @@ def search_sentinel_scenes(
         }
     except Exception as e:  # noqa: BLE001
         out = _synthetic_scenes(lon, lat, start, end, collection, max_results)
-        out["warning"] = (
-            f"catalogue unreachable ({e}); returning a placeholder scene list"
+        out["warning"] = untrusted(
+            f"catalogue unreachable ({e}); returning a placeholder scene list",
+            "copernicus",
         )
         return out
 
@@ -113,7 +131,7 @@ def _synthetic_scenes(lon, lat, start, end, collection, n):
 def estimate_next_pass(lon: float, lat: float, collection: str = "SENTINEL-1") -> dict:
     """Rough estimate of the next Sentinel pass over a point, from the most recent archived scene plus the nominal revisit period.
     This is an estimate for planning, not an orbital prediction."""
-    end = datetime.now(UTC)
+    end = scenario_now()
     recent = search_sentinel_scenes(
         lon, lat, (end - timedelta(days=20)).isoformat(), end.isoformat(), collection, 1
     )
@@ -140,6 +158,41 @@ def estimate_next_pass(lon: float, lat: float, collection: str = "SENTINEL-1") -
     }
 
 
+#: What this deployment can actually task, and the bounds a request must fall in.
+SENSORS = ("sentinel-1-sar", "sentinel-2-optical", "commercial-sar", "patrol-aircraft")
+PRIORITIES = ("routine", "priority", "immediate")
+RADIUS_NM = (1.0, 100.0)
+
+
+def _tasking_problem(
+    sensor: str,
+    center_lon: float,
+    center_lat: float,
+    radius_nm: float,
+    window_start: str,
+    window_end: str,
+    priority: str,
+) -> str | None:
+    """Why this request cannot be recorded, or None. Pure, so it is unit-tested."""
+    if sensor not in SENSORS:
+        return f"sensor must be one of {', '.join(SENSORS)}"
+    if priority not in PRIORITIES:
+        return f"priority must be one of {', '.join(PRIORITIES)}"
+    try:
+        lon, lat, radius = float(center_lon), float(center_lat), float(radius_nm)
+    except (TypeError, ValueError):
+        return "center_lon, center_lat and radius_nm must be numbers"
+    if not (-180 <= lon <= 180 and -90 <= lat <= 90):
+        return f"center {lon},{lat} is not a position on Earth"
+    if not (RADIUS_NM[0] <= radius <= RADIUS_NM[1]):
+        return f"radius_nm must be between {RADIUS_NM[0]} and {RADIUS_NM[1]}"
+    if not window_start or not window_end:
+        return "window_start and window_end are required"
+    if str(window_end) < str(window_start):
+        return "window_end is before window_start"
+    return None
+
+
 @mcp.tool()
 @traced_tool
 def create_tasking_request(
@@ -155,13 +208,24 @@ def create_tasking_request(
 ) -> dict:
     """Propose a collection request (SAR re-look, optical, patrol aircraft) for HUMAN APPROVAL. Creates a record with status 'proposed'.
     sensor: sentinel-1-sar | sentinel-2-optical | commercial-sar | patrol-aircraft."""
-    d = radius_nm / 60.0
+    # Validated here as well as in the orchestrator: this tool writes a record an
+    # officer is asked to approve, and a request with an impossible AOI, an unknown
+    # sensor or a backwards window must never reach that queue (A2).
+    problem = _tasking_problem(
+        sensor, center_lon, center_lat, radius_nm, window_start, window_end, priority
+    )
+    if problem:
+        return {"error": problem}
+    # A degree of longitude shrinks with latitude; without cos(lat) the box was
+    # twice as wide as asked for in the Baltic and wider still further north (A8).
+    d_lat = radius_nm / 60.0
+    d_lon = radius_nm / (60.0 * max(0.01, math.cos(math.radians(center_lat))))
     ring = [
-        (center_lon - d, center_lat - d),
-        (center_lon + d, center_lat - d),
-        (center_lon + d, center_lat + d),
-        (center_lon - d, center_lat + d),
-        (center_lon - d, center_lat - d),
+        (center_lon - d_lon, center_lat - d_lat),
+        (center_lon + d_lon, center_lat - d_lat),
+        (center_lon + d_lon, center_lat + d_lat),
+        (center_lon - d_lon, center_lat + d_lat),
+        (center_lon - d_lon, center_lat - d_lat),
     ]
     wkt = "POLYGON((" + ",".join(f"{x} {y}" for x, y in ring) + "))"
     rows = q(

@@ -20,7 +20,7 @@ Copernicus Data Space, OpenStreetMap, OpenSanctions) can be switched on with env
 | Agent to agent | A2A protocol (`a2a-sdk` 0.3.x via Strands; native `a2a-sdk` server for the LangGraph agent), SigV4-signed on AWS | Orchestrator discovers specialists from their agent cards |
 | Models | Amazon Bedrock with Amazon Nova by tier (Lite, 2 Lite, Pro) in production; Anthropic API, OpenAI and Google Gemini for development and eval comparison | `MODEL_PROVIDER` + `MODEL_ID`; see [Model providers](#model-providers) |
 | Data | PostGIS 17, Redis stream, synthetic AIS replay with injected anomalies (ground truth kept for evals) | Same schema locally (Postgres container) and on AWS (Aurora Serverless v2) |
-| Observability | OpenTelemetry everywhere: Strands GenAI spans, OpenInference for LangGraph, MCP tool spans, FastAPI/httpx/psycopg auto-instrumentation. Local and AWS alike: a collector into Grafana, Tempo (span metrics and service graph), Prometheus and Loki with one generated board; on AWS also CloudWatch with Transaction Search, X-Ray, 31 alarms on an SNS topic and AgentCore's own unified telemetry | One exporter, both backends |
+| Observability | OpenTelemetry everywhere: Strands GenAI spans, OpenInference for LangGraph, MCP tool spans, FastAPI/httpx/psycopg auto-instrumentation. Local and AWS alike: a collector into Grafana, Tempo (span metrics and service graph), Prometheus and Loki with one generated board; on AWS also CloudWatch with Transaction Search, X-Ray, 36 alarms on an SNS topic and AgentCore's own unified telemetry | One exporter, both backends |
 | Evaluation | Ground-truth recall/precision scorer, per-node suites with regression floors (`evals/node_evals.py --gate`), an Inspect AI task, AgentCore online Evaluations with a report rubric | Agents never see the ground truth; a prompt or model change is not done until the gate passes |
 | Infra | Docker Compose locally; AWS CDK (Python) with 4 stacks | One command either way |
 
@@ -42,8 +42,9 @@ Full documentation: [docs/README.md](docs/README.md) (architecture with diagrams
 ## Quick start (local)
 
 Prerequisites: Docker Desktop (or compatible) and credentials for one model provider. The default
-is Amazon Bedrock, so AWS credentials with Claude model access (agents call Bedrock even when
-running locally); set `MODEL_PROVIDER` to use another provider instead (see [Model providers](#model-providers)).
+is Amazon Bedrock, so AWS credentials with Amazon Nova model access (agents call Bedrock even when
+running locally; production is Nova only, ADR-0002); set `MODEL_PROVIDER` to use another provider
+instead (see [Model providers](#model-providers)).
 
     cp .env.example .env            # set MODEL_PROVIDER + its credential, optionally an AISSTREAM_API_KEY
     make up                          # builds and starts ~15 containers
@@ -90,7 +91,7 @@ first watch-floor account exists after the deploy.
 
 1. `argus-network`: VPC with public, private (NAT per zone) and isolated agent subnets, security groups, interface endpoints for every AWS service the agents use, flow logs, and the `argus-deployer` role (administrator, MFA only) for every deploy after the first.
 2. `argus-data`: Aurora Serverless v2 PostgreSQL 17 (PostGIS created by the schema script, IAM authentication, seven-day backups, monthly password rotation), ElastiCache Serverless (Valkey), the data-key secret, the S3 archive and an access-log bucket.
-3. `argus-platform`: ECS Fargate services for the API, the investigation and sweep workers, the UI, AIS ingest, the OpenTelemetry collector and the self-hosted Grafana task; two SQS queues with dead letters and an EventBridge schedule; an internal ALB (HTTPS to the API) for the agents; a public ALB (HTTPS only, Cognito sign-in on every listener, AWS WAF) for the watch floor; the `argus-operator` role for tooling; 31 CloudWatch alarms on one SNS topic.
+3. `argus-platform`: ECS Fargate services for the API, the investigation and sweep workers, the UI, AIS ingest, the OpenTelemetry collector and the self-hosted Grafana task; two SQS queues with dead letters and an EventBridge schedule; an internal ALB (HTTPS to the API) for the agents; a public ALB (HTTPS only, Cognito sign-in on every listener, AWS WAF) for the watch floor; the `argus-operator` role for tooling; 36 CloudWatch alarms on one SNS topic.
 4. `argus-agents`: the four agent runtimes and the tool plane on AgentCore: the four MCP servers as AgentCore Runtime endpoints, a gateway with a Cedar policy engine in front of them, a second gateway in front of the specialist agents, the Agent Registry records, Identity credential provider, Memory, online Evaluations, a Bedrock Guardrail, managed prompts, and the Harness and configuration-bundle pilots.
 
 The API's workers invoke the orchestrator with `InvokeAgentRuntime`; the orchestrator finds the
@@ -131,6 +132,9 @@ See `.env.example`. Notable switches: `AIS_MODE=live` with `AISSTREAM_API_KEY` f
 scenario bounding box plus the `data/areas.yaml` regions named by `WATCH_AREAS` (`all` by default;
 the UI's "watching" selector filters the map per area in both modes); `GEO_USE_OSM=true` for Overpass/Nominatim; `OPENSANCTIONS_API_KEY` for real
 sanctions screening; `BEDROCK_GUARDRAIL_ID` to apply a Bedrock Guardrail on every model call;
+`IMAGERY_OFFLINE=true` to skip the Copernicus catalogue; `REPLAY_SPEED` and `REPLAY_LOOP` for the
+scenario clock; `SWEEP_MAX_CANDIDATES` for how many candidates one sweep reviews; and
+`MODEL_TIER_<ROLE>` or `MODEL_ID_<TIER>` to move a role between tiers.
 
 ## Known limits and things to verify in your account
 
@@ -177,13 +181,13 @@ Sweeps and investigations are rows in `jobs`; the queue (Redis Streams locally, 
 
 ## Investigation graph, tiers, safety, provenance
 
-The orchestrator is code: identity and behaviour Investigator branches run in parallel over A2A, a pure merge joins them, the Tasking agent gets the extracted evidence gap, and a tool-less report node writes the Vessel of Interest report from validated JSON only. Models are chosen by tier (Watch fast, Tasking standard, Investigator and report strong; `MODEL_TIER_<ROLE>` and `MODEL_ID_<TIER>` override; `MODEL_ID` pins everything). The Investigator escalates a tier if its output fails validation; the report node retries once with the policy violations (allowed actions, evidence traceability, `agents/shared/policy.py`). MCP servers mark external free text as untrusted data and expose their version on `/health`; each investigation stores a provenance manifest (code revision, prompt hashes, per-node models and attempts, MCP versions, evidence snapshot ids).
+The orchestrator is code: identity and behaviour Investigator branches run in parallel over A2A, a pure merge joins them, the Tasking agent gets the extracted evidence gap, and a tool-less report node writes the Vessel of Interest report from validated JSON only. Models are chosen by tier (Watch fast, Tasking standard, Investigator and report strong; `MODEL_TIER_<ROLE>` and `MODEL_ID_<TIER>` override; `MODEL_ID` pins everything). The Investigator escalates a tier if its output fails validation; the report node retries once with the policy violations (allowed actions, evidence traceability, `agents/shared/policy.py`), fails closed on a hard problem that survives the retry, and accepts a report that still states no counter-indicators or gaps with a caveat that says so (ADR-0020). A branch that did not complete caps the report's confidence and priority in code. MCP servers mark external free text as untrusted data and expose their version on `/health`; each investigation stores a provenance manifest (code revision, prompt hashes, per-node models and attempts, MCP versions, evidence snapshot ids).
 
 ## Evals and operations
 
 - **Detector evals** (`tests/integration/test_detectors.py`): every injected anomaly in every scenario must be found by its AIS detector, false positives bounded. Model-free; CI runs them against a PostGIS service. Locally: `DATABASE_URL=postgresql://argus:argus@localhost:5432/argus_test pytest -m integration tests/integration` (use a scratch database; the test reloads the scenario).
 - **Node evals** (`python evals/node_evals.py --api http://localhost:8000 --gate`): Watch recall/precision, Investigator schema and evidence traceability and expected content, Tasking decision match, report completion, policy cleanliness and an LLM-judge rubric (three samples at temperature 0, averaged per dimension; one sample swung a full point between identical runs). The Watch suite dismisses open alerts first, because the agent deliberately does not duplicate them. Watch precision counts false alarms only among the kinds the scenario labels (other kinds are reported as unscored), and expected keywords may list alternatives (`["PW", "Palau"]`). Install the eval deps from `evals/requirements.txt` (the inspect-ai harness has its own `evals/requirements-inspect.txt`). Cases in `evals/cases.yaml`, floors in `evals/thresholds.yaml`, results in `evals/results/`, `GET /evals`, and CloudWatch GenAI Observability with `--push`. `evals/e2e.sh` runs the suites over every scenario. The `evals` workflow runs nightly and on prompt or model changes when `EVAL_API_URL` is configured.
-- **SLOs** (`GET /slo`, Prometheus `GET /metrics`): sweep and investigation p95 latency, completion ratio, alert-to-investigation lag, cost per investigation (from per-node token usage in the provenance manifest and a price table, `MODEL_PRICES_JSON` to override), latest eval recall. Alert rules in `observability/alerts.yml`, dashboard "Argus SLOs" in Grafana; on AWS the collector scrapes the same endpoint and CDK creates CloudWatch alarms and an SNS topic (`-c alertEmail=you@example.org`).
+- **SLOs** (`GET /slo`, Prometheus `GET /metrics`): sweep and investigation p95 latency, completion ratio, alert-to-investigation lag, cost per investigation (from per-node token usage in the provenance manifest and a price table, `MODEL_PRICES_JSON` to override), latest eval recall. Alert rules in `observability/alerts.yml`, dashboard "Argus" in Grafana (one generated board, `observability/grafana/build_dashboards.py`); on AWS the collector scrapes the same endpoint and CDK creates CloudWatch alarms and an SNS topic (`-c alertEmail=you@example.org`).
 
 ## Watch floor UI
 
@@ -210,7 +214,7 @@ Useful deploy-time context (pass via `CDK_CONTEXT="-c key=value ..."` or edit `i
 |---|---|---|
 | `uiAllowedCidr` | `0.0.0.0/0` | Restrict the public UI load balancer to an office or VPN range. Set this before real use |
 | `uiCertificateArn`, `uiDomain` | empty | A domain certificate and its name; without them the deploy issues a self-signed certificate for the balancer's own name |
-| `officerEmail`, `officerMfa` | from `.env` | First watch-floor account; `required` enforces TOTP |
+| `officerEmail`, `officerMfa` | from `.env` | First watch-floor account; `required` enforces TOTP, `optional` (the default) does not lock out an officer without one |
 | `natPerAz`, `retainData`, `auroraReader` | `true`, `false`, `false` | NAT per zone; deletion protection and final snapshot; a reader instance |
 | `bedrockModelVendors` | `amazon` | Bedrock vendors the agents may invoke |
 | `paused` | `false` | Stop mode, normally set by `make stop-aws` |
@@ -314,7 +318,7 @@ Every row is in the repository and deployed; `docs/ROADMAP.md` lists what comes 
 | LLM-centric tracing | CloudWatch GenAI Observability | In place, optional profile |
 | AWS backends | AgentCore-native telemetry in CloudWatch (runtime logs, unified traces with Transaction Search, Evaluations and Policy metrics, the GenAI Observability agent views) plus the collector fan-out to the self-hosted Grafana + Tempo + Loki + Prometheus Fargate task (Grafana state on Aurora, Tempo and Loki on EFS; `GrafanaUrl`; `-c grafanaStack=false` to skip) | In place |
 | Provenance manifest per investigation | Postgres, prompt hashes and versions, tool versions | In place |
-| SLOs, cost per investigation, alarms | API SLIs, Grafana rules and 31 CloudWatch alarms on one SNS topic | In place |
+| SLOs, cost per investigation, alarms | API SLIs, Grafana rules and 36 CloudWatch alarms on one SNS topic | In place |
 
 ### Evaluation
 
@@ -338,7 +342,7 @@ Every row is in the repository and deployed; `docs/ROADMAP.md` lists what comes 
 - **One IAM role per agent** (`argus-agent-watch`, `-investigator`, `-tasking`, `-orchestrator`). Only the orchestrator may invoke the specialist runtimes and use AgentCore Memory; every role may invoke only first-party Bedrock models.
 - **Tool authorization at the gateway, caller identity on the API.** On AWS every tool call is an MCP call to the AgentCore Gateway signed with the agent's own role; the gateway's Policy engine holds one Cedar policy per role generated from `mcp-servers/tools.json` (watch: ais and geo; investigator: ais, registry and geo; tasking: imagery and geo), so an agent cannot call a tool it was not granted, and the decision is logged. The tool runtimes accept the gateway role only. Agent-only API routes keep the STS-signed caller token (`TOOL_AUTH=aws-iam`): the API forwards it to STS and allows the role or fails closed.
 - **Append-only audit log.** `audit_events` records every state change (alert raised or reviewed, investigation started/completed/failed/reviewed, tasking proposed/approved/rejected, sweep requested) with the actor (verified agent role or watch officer id), time, details and trace id. A trigger rejects UPDATE and DELETE. Read it at `GET /audit`.
-- **Review states.** Alerts and VOI reports start as `draft` and are shown as "AI draft" in the UI until a watch officer accepts or rejects them (`POST /alerts/{id}/review`, `POST /investigations/{id}/review`). Tasking keeps proposed/approved/rejected and now records who decided. The officer's id comes from the `X-Watch-Officer` header (the UI's "officer" box) until the load balancer gets an OIDC login; that is the known gap in this phase.
+- **Review states.** Alerts and VOI reports start as `draft` and are shown as "AI draft" in the UI until a watch officer accepts or rejects them (`POST /alerts/{id}/review`, `POST /investigations/{id}/review`). Tasking keeps proposed/approved/rejected and records who decided. On AWS the officer's identity comes from the load balancer's Cognito sign-in: `OFFICER_AUTH=oidc` makes every non-public, non-agent route require the balancer's signed `x-amzn-oidc-data` token, verified in `services/api/officerauth.py`, and the id on every decision is the signed-in user (ADR-0018). Locally `OFFICER_AUTH=header` keeps the `X-Watch-Officer` box for development.
 
 ## Licence
 

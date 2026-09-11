@@ -140,10 +140,27 @@ def parse_sts_response(xml: str) -> tuple[str, str]:
     return arn.group(1), account.group(1)
 
 
+def _roles(var: str) -> set[str]:
+    return {r.strip() for r in os.getenv(var, "").split(",") if r.strip()}
+
+
 def allowed_roles() -> set[str]:
-    return {
-        r.strip() for r in os.getenv("TOOL_ALLOWED_ROLES", "").split(",") if r.strip()
-    }
+    """Every role the service admits at all (agents and operators together)."""
+    return _roles("TOOL_ALLOWED_ROLES")
+
+
+def agent_roles() -> set[str]:
+    """Roles allowed on agent-only routes. Defaults to the whole allowlist so the MCP
+    servers, which have no officer routes, keep their single-list behaviour."""
+    named = _roles("AGENT_ALLOWED_ROLES")
+    return named or allowed_roles()
+
+
+def officer_roles() -> set[str]:
+    """Roles allowed to act as an officer (review, approve, sweep). An agent role must
+    never appear here: agents propose, officers decide. Empty means no IAM caller may
+    take an officer action, which is the safe default when the variable is unset."""
+    return _roles("OFFICER_ALLOWED_ROLES")
 
 
 def authorize(caller: Caller, roles: set[str], account: str = "") -> None:
@@ -204,13 +221,25 @@ def mode() -> str:
     return os.getenv("TOOL_AUTH", "none").strip().lower()
 
 
+def _every_route_is_an_agent_route(path: str, method: str) -> bool:
+    return True
+
+
 class CallerAuthMiddleware:
     """ASGI middleware: verifies the caller on protected paths and stores it as
     `request.state.caller` (a Caller). Unprotected paths get ANONYMOUS."""
 
-    def __init__(self, app, protected: Callable[[str, str], bool]):
+    def __init__(
+        self,
+        app,
+        protected: Callable[[str, str], bool],
+        agent_route: Callable[[str, str], bool] | None = None,
+    ):
         self.app = app
         self.protected = protected
+        # Without an agent-route predicate every protected path is treated as one, which
+        # is the MCP servers' case: they serve tools only.
+        self.agent_route = agent_route or _every_route_is_an_agent_route
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -226,9 +255,14 @@ class CallerAuthMiddleware:
                 if not auth.lower().startswith("bearer "):
                     raise AuthError(401, "caller token required")
                 caller = verify_token(auth[7:].strip())
-                authorize(
-                    caller, allowed_roles(), os.getenv("TOOL_ALLOWED_ACCOUNT", "")
+                # An agent route admits agent roles; anything else an IAM caller reaches
+                # is an officer action, so it needs the officer allowlist (P1).
+                roles = (
+                    agent_roles()
+                    if self.agent_route(scope["path"], scope["method"])
+                    else officer_roles() or allowed_roles()
                 )
+                authorize(caller, roles, os.getenv("TOOL_ALLOWED_ACCOUNT", ""))
             except AuthError as e:
                 log.warning(
                     "rejected %s %s: %s", scope["method"], scope["path"], e.message

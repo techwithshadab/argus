@@ -1,0 +1,17 @@
+{
+  "_comment": "Environment lookups for the CI account (123456789012) so `cdk synth` is a real gate rather than `|| true`. Copied to cdk.context.json by the ci workflow before synth. Without it, synth needs AWS credentials for the availability-zone and S3 prefix-list lookups and fails on a fork. The values are the shape of the answer, not this deployment's: the zone names are the standard us-east-1 set and the prefix list id is region-wide and public.",
+  "availability-zones:account=123456789012:region=us-east-1": [
+    "us-east-1a",
+    "us-east-1b",
+    "us-east-1c",
+    "us-east-1d",
+    "us-east-1e",
+    "us-east-1f"
+  ],
+  "cc-api-provider:account=123456789012:expectedMatchCount=exactly-one:propertiesToReturn.0=PrefixListId:propertyMatch.PrefixListName=com.amazonaws.us-east-1.s3:region=us-east-1:typeName=AWS$:$:EC2$:$:PrefixList": [
+    {
+      "PrefixListId": "pl-63a5400a",
+      "Identifier": "pl-63a5400a"
+    }
+  ]
+}

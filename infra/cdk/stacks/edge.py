@@ -20,11 +20,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from aws_cdk import (
+    ArnFormat,
     BundlingOptions,
     CustomResource,
     DockerImage,
     Duration,
     RemovalPolicy,
+    Stack,
 )
 from aws_cdk import aws_cognito as cognito
 from aws_cdk import aws_ec2 as ec2
@@ -299,6 +301,45 @@ def public_web_acl(
         f"{cid}Association",
         resource_arn=alb.load_balancer_arn,
         web_acl_arn=acl.attr_arn,
+    )
+    # What the edge refused, kept (I19). `sampled_requests_enabled` gives only a rolling
+    # sample capped at 500 requests, so by the time `argus-waf-blocked` is investigated
+    # the evidence that would distinguish an attack from a managed rule matching
+    # legitimate officer traffic has usually rolled away. The group name must start with
+    # `aws-waf-logs-`, and the destination ARN must not carry the trailing `:*`.
+    waf_logs = logs.LogGroup(
+        scope,
+        f"{cid}Logs",
+        log_group_name="aws-waf-logs-argus",
+        retention=logs.RetentionDays.ONE_MONTH,
+        removal_policy=RemovalPolicy.DESTROY,
+    )
+    wafv2.CfnLoggingConfiguration(
+        scope,
+        f"{cid}Logging",
+        resource_arn=acl.attr_arn,
+        log_destination_configs=[
+            Stack.of(scope).format_arn(
+                service="logs",
+                resource="log-group",
+                resource_name=waf_logs.log_group_name,
+                arn_format=ArnFormat.COLON_RESOURCE_NAME,
+            )
+        ],
+        # WAF logs whole headers, and `/api/*` requests carrying a bearer token pass
+        # through this balancer, so without redaction the officer's token and the
+        # balancer's signed session token would land in a log group.
+        redacted_fields=[
+            wafv2.CfnLoggingConfiguration.FieldToMatchProperty(
+                single_header={"Name": name}
+            )
+            for name in (
+                "authorization",
+                "cookie",
+                "x-amzn-oidc-data",
+                "x-amzn-oidc-accesstoken",
+            )
+        ],
     )
     return acl
 

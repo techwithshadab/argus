@@ -2,8 +2,10 @@
 # model changes. They need a running Argus stack, so they run against EVAL_API_URL (the deployed
 # watch floor's /api) with credentials that may assume the deployment's argus-operator role: the
 # API admits that role's caller token, the LLM judge runs with the same session, and the scores
-# are pushed to CloudWatch. Without the secret the job records a notice and exits green: it must
-# never block CI for contributors without a stack.
+# are pushed to CloudWatch. Credentials come from GitHub's OIDC provider (the stack creates the
+# role with `-c githubRepo=owner/name`), so no long-lived access key lives in repository secrets.
+# Without the secret the job records a notice and exits green: it must never block CI for
+# contributors without a stack.
 name: evals
 on:
   schedule: [{cron: "17 2 * * *"}]
@@ -13,6 +15,9 @@ on:
 jobs:
   node-evals:
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # request the OIDC token that stands in for an access key
+      contents: read
     env:
       # A step `if` cannot read the secrets context, so the URL is mapped to env once here.
       EVAL_API_URL: ${{ secrets.EVAL_API_URL }}
@@ -25,9 +30,17 @@ jobs:
         if: ${{ env.EVAL_API_URL != '' }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.EVAL_AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.EVAL_AWS_SECRET_ACCESS_KEY }}
+          # The CI role is assumed from the OIDC token, then it assumes the operator role.
+          role-to-assume: ${{ secrets.EVAL_CI_ROLE_ARN }}
+          role-chaining: false
+          role-duration-seconds: 3600
+          aws-region: us-east-1
+      - name: chain to the operator role
+        if: ${{ env.EVAL_API_URL != '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
           role-to-assume: ${{ secrets.EVAL_OPERATOR_ROLE_ARN }}
+          role-chaining: true
           role-duration-seconds: 3600
           aws-region: us-east-1
       - name: node evals

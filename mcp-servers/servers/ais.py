@@ -21,6 +21,9 @@ mcp = FastMCP(
 )
 
 SCENARIO_END = os.getenv("SCENARIO_END", "2026-09-01T08:00:00Z")
+#: Rows any listing tool returns at once. The Investigator has no sliding-window
+#: manager, so an unbounded result is an `Input Tokens Exceeded` away (A9).
+MAX_ROWS = int(os.getenv("TOOL_MAX_ROWS", "200"))
 
 
 _FEED_TEXT = ("name", "name_a", "name_b")
@@ -97,11 +100,15 @@ def list_vessels(hours: float = 24, until: str | None = None) -> dict:
         """SELECT DISTINCT ON (p.mmsi) p.mmsi, v.name, v.flag, v.ship_type, p.ts,
                   ST_Y(p.geom::geometry) lat, ST_X(p.geom::geometry) lon, p.sog, p.nav_status
            FROM positions p LEFT JOIN vessels v USING (mmsi)
-           WHERE p.ts BETWEEN %s AND %s ORDER BY p.mmsi, p.ts DESC""",
-        (start, end),
+           WHERE p.ts BETWEEN %s AND %s ORDER BY p.mmsi, p.ts DESC
+           LIMIT %s""",
+        (start, end, MAX_ROWS),
     )
     return {
         "count": len(rows),
+        # A capped list that does not say so reads to the model as "that was everyone",
+        # and live mode watches roughly 900 vessels (A9).
+        "truncated": len(rows) == MAX_ROWS,
         "vessels": [{**r, "ts": r["ts"].isoformat()} for r in rows],
     }
 
@@ -320,7 +327,11 @@ def list_zone_incursions(
     start, end = _window(hours, until)
     rows = _rows(
         """SELECT p.mmsi, v.name, z.name zone, z.kind, MIN(p.ts) first_inside, MAX(p.ts) last_inside, COUNT(*) reports,
-                  AVG(p.sog) avg_sog
+                  AVG(p.sog) avg_sog,
+                  -- Where inside the zone, so a candidate carries a position the
+                  -- model can pass to point_in_zones rather than inventing one (A5).
+                  ST_Y(ST_Centroid(ST_Collect(p.geom::geometry))) lat,
+                  ST_X(ST_Centroid(ST_Collect(p.geom::geometry))) lon
            FROM positions p JOIN zones z ON ST_Intersects(p.geom, z.geom)
            LEFT JOIN vessels v USING (mmsi)
            WHERE p.ts BETWEEN %s AND %s AND z.kind = ANY(%s)
@@ -334,6 +345,8 @@ def list_zone_incursions(
                 "first_inside": r["first_inside"].isoformat(),
                 "last_inside": r["last_inside"].isoformat(),
                 "avg_sog": round(float(r["avg_sog"] or 0), 1),
+                "lat": round(float(r["lat"]), 5) if r["lat"] is not None else None,
+                "lon": round(float(r["lon"]), 5) if r["lon"] is not None else None,
             }
             for r in rows
         ]
@@ -351,12 +364,17 @@ def find_vessels_near(
 ) -> dict:
     """Vessels that reported within `radius_nm` of a point around `at_time` (ISO). Useful for 'who was nearby'."""
     t = datetime.fromisoformat((at_time or scenario_now()).replace("Z", "+00:00"))
+    # Capped by distance, not arbitrarily: the inner DISTINCT ON picks each vessel's
+    # closest-in-time report, and the outer query keeps the nearest ones. In a busy
+    # anchorage this was hundreds of rows on a path with no truncation (A9).
     rows = _rows(
-        """SELECT DISTINCT ON (p.mmsi) p.mmsi, v.name, v.ship_type, p.ts,
-                  ST_Distance(p.geom, ST_MakePoint(%s,%s)::geography)/1852 distance_nm, p.sog
-           FROM positions p LEFT JOIN vessels v USING (mmsi)
-           WHERE p.ts BETWEEN %s AND %s AND ST_DWithin(p.geom, ST_MakePoint(%s,%s)::geography, %s*1852)
-           ORDER BY p.mmsi, ABS(EXTRACT(EPOCH FROM (p.ts - %s)))""",
+        """SELECT * FROM (
+             SELECT DISTINCT ON (p.mmsi) p.mmsi, v.name, v.ship_type, p.ts,
+                    ST_Distance(p.geom, ST_MakePoint(%s,%s)::geography)/1852 distance_nm, p.sog
+               FROM positions p LEFT JOIN vessels v USING (mmsi)
+              WHERE p.ts BETWEEN %s AND %s AND ST_DWithin(p.geom, ST_MakePoint(%s,%s)::geography, %s*1852)
+              ORDER BY p.mmsi, ABS(EXTRACT(EPOCH FROM (p.ts - %s)))
+           ) v ORDER BY distance_nm LIMIT %s""",
         (
             lon,
             lat,
@@ -366,9 +384,12 @@ def find_vessels_near(
             lat,
             radius_nm,
             t,
+            MAX_ROWS,
         ),
     )
     return {
+        "count": len(rows),
+        "truncated": len(rows) == MAX_ROWS,
         "near": [
             {
                 **r,
@@ -376,17 +397,29 @@ def find_vessels_near(
                 "distance_nm": round(float(r["distance_nm"]), 2),
             }
             for r in rows
-        ]
+        ],
     }
 
 
 @mcp.tool()
 @traced_tool
-def list_open_alerts(mmsi: int | None = None) -> dict:
-    """Alerts already raised by the watch agent, so agents do not duplicate work."""
+def list_open_alerts(mmsi: int | None = None, hours: float = 168) -> dict:
+    """Alerts already raised by the watch agent, so agents do not duplicate work.
+
+    Every alert that was not dismissed, not only the ones still awaiting review: a
+    window already investigated or aged out of the queue is still a window that has
+    been raised, and consulting only `open` alerts re-raised it on the next sweep
+    (gap audit P5). Bounded by `hours` so an old case cannot suppress a genuine
+    re-occurrence months later.
+    """
     rows = _rows(
-        "SELECT id, mmsi, kind, severity, score, started_at, ended_at, status, details FROM alerts WHERE status='open' AND (%s::bigint IS NULL OR mmsi=%s) ORDER BY created_at DESC",
-        (mmsi, mmsi),
+        """SELECT id, mmsi, kind, severity, score, started_at, ended_at, status, details
+             FROM alerts
+            WHERE status <> 'dismissed'
+              AND created_at > now() - make_interval(secs => %s)
+              AND (%s::bigint IS NULL OR mmsi=%s)
+            ORDER BY created_at DESC""",
+        (float(hours) * 3600.0, mmsi, mmsi),
     )
     return {
         "alerts": [

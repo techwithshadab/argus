@@ -18,11 +18,14 @@ import sys
 import time
 from datetime import UTC, datetime
 
+import feed_metrics
 import psycopg
 import redis.asyncio as redis
 from aisstatic import static_rows, upsert_registry_sql, upsert_vessel_sql
+from aisvalidate import position_record, position_rows, should_flush
 from areas import load_catalogue, select_areas, subscription_boxes
 from datakey import data_key
+from feed_metrics import FeedHealth
 from network import build_graph, rendezvous_edges
 from psycopg.types.json import Jsonb
 
@@ -307,11 +310,30 @@ def bulk_load_positions(gen: ScenarioGenerator) -> None:
     log.info("bulk loaded %d synthetic positions", len(gen.positions))
 
 
+#: How often the ingest task reports on itself, in seconds.
+HEARTBEAT_S = int(os.getenv("FEED_HEARTBEAT_S", "60"))
+
+
+async def heartbeat(health: FeedHealth, mode: str = "live") -> None:
+    """Publish the feed heartbeat forever, connected or not (I4)."""
+    while True:
+        await asyncio.sleep(HEARTBEAT_S)
+        age, stored, dropped = health.take()
+        await asyncio.to_thread(feed_metrics.publish, age, stored, dropped, mode)
+        if age > HEARTBEAT_S * 5:
+            log.warning("no position stored for %.0f s", age)
+
+
 async def replay_stream(gen: ScenarioGenerator) -> None:
     """Stream the scenario at REPLAY_SPEED. With REPLAY_LOOP=true (default) it restarts after a
     short pause so a demo never goes quiet; the database already holds the full history."""
     r = redis.from_url(REDIS_URL)
     await r.delete(STREAM)
+    # The same heartbeat as live mode, so one alarm covers both and a replay that
+    # stalls is as visible as a silent feed (I4).
+    health = FeedHealth()
+    beat = asyncio.create_task(heartbeat(health, "replay"))
+    beat.add_done_callback(lambda t: t.cancelled() or t.exception())
     while True:
         t_prev = gen.positions[0].ts
         log.info("replaying %d positions at %.0fx", len(gen.positions), SPEED)
@@ -326,11 +348,65 @@ async def replay_stream(gen: ScenarioGenerator) -> None:
                 maxlen=20000,
                 approximate=True,
             )
+            health.stored_one()
         await r.xadd(STREAM, {"data": json.dumps({"event": "replay_complete"})})
         log.info("replay complete")
         if not LOOP:
             return
         await asyncio.sleep(LOOP_PAUSE_S)
+
+
+async def flush_batch(c, r, batch: list[dict], health) -> int:
+    """Write one batch in a single transaction, then publish it. Returns rows stored.
+
+    A row the validator let through can still be rejected by the database, so a failed
+    batch is retried one row at a time: the batch is an efficiency, never a reason to
+    lose a report we could have kept (P15, and P3's per-message guarantee).
+    """
+    if not batch:
+        return 0
+    vessels, positions = position_rows(batch)
+    try:
+        async with c.transaction():
+            await c.cursor().executemany(
+                "INSERT INTO vessels (mmsi, name, is_synthetic) VALUES (%s,%s,false) ON CONFLICT (mmsi) DO NOTHING",
+                vessels,
+            )
+            await c.cursor().executemany(
+                "INSERT INTO positions (mmsi, ts, geom, sog, cog, nav_status, source)"
+                " VALUES (%s,%s,ST_GeogFromText(%s),%s,%s,%s,%s)",
+                positions,
+            )
+    except psycopg.Error as e:
+        log.warning("batch of %d failed (%s); retrying row by row", len(batch), e)
+        kept = []
+        for one in batch:
+            v, pos = position_rows([one])
+            try:
+                async with c.transaction():
+                    await c.cursor().executemany(
+                        "INSERT INTO vessels (mmsi, name, is_synthetic) VALUES (%s,%s,false) ON CONFLICT (mmsi) DO NOTHING",
+                        v,
+                    )
+                    await c.cursor().executemany(
+                        "INSERT INTO positions (mmsi, ts, geom, sog, cog, nav_status, source)"
+                        " VALUES (%s,%s,ST_GeogFromText(%s),%s,%s,%s,%s)",
+                        pos,
+                    )
+                kept.append(one)
+            except psycopg.Error as one_e:
+                health.dropped_one()
+                log.warning("dropped a report for %s (%s)", one["mmsi"], one_e)
+        batch = kept
+        if not batch:
+            return 0
+    pipe = r.pipeline()
+    for one in batch:
+        pipe.xadd(STREAM, {"data": json.dumps(one)}, maxlen=20000, approximate=True)
+    await pipe.execute()
+    for _ in batch:
+        health.stored_one()
+    return len(batch)
 
 
 async def live_aisstream(areas: list[dict]) -> None:
@@ -350,6 +426,12 @@ async def live_aisstream(areas: list[dict]) -> None:
     r = redis.from_url(REDIS_URL)
     partition_day = None
     received = 0
+    dropped = 0
+    health = FeedHealth()
+    batch: list[dict] = []
+    last_flush = time.monotonic()
+    beat = asyncio.create_task(heartbeat(health, "live"))
+    beat.add_done_callback(lambda t: t.cancelled() or t.exception())
     while True:
         try:
             async with await psycopg.AsyncConnection.connect(
@@ -384,43 +466,35 @@ async def live_aisstream(areas: list[dict]) -> None:
                         if m.get("MessageType") != "PositionReport":
                             if "error" in m:
                                 raise RuntimeError(f"AISStream: {m['error']}")
+                            # A quiet feed must still write what it has, or the last
+                            # few reports wait for a batch that never fills.
+                            if should_flush(len(batch), time.monotonic() - last_flush):
+                                received += await flush_batch(c, r, batch, health)
+                                batch, last_flush = [], time.monotonic()
                             continue
                         pr, meta = m["Message"]["PositionReport"], m["MetaData"]
-                        rec = {
-                            "mmsi": pr["UserID"],
-                            "ts": datetime.now(UTC).isoformat(),
-                            "lon": pr["Longitude"],
-                            "lat": pr["Latitude"],
-                            "sog": pr.get("Sog", 0.0),
-                            "cog": pr.get("Cog", 0.0),
-                            "nav_status": str(pr.get("NavigationalStatus")),
-                            "source": "aisstream",
-                        }
-                        await c.execute(
-                            "INSERT INTO vessels (mmsi, name, is_synthetic) VALUES (%s,%s,false) ON CONFLICT (mmsi) DO NOTHING",
-                            (rec["mmsi"], (meta.get("ShipName") or "").strip()),
-                        )
-                        await c.execute(
-                            "INSERT INTO positions (mmsi, ts, geom, sog, cog, nav_status, source) VALUES (%s,%s,ST_GeogFromText(%s),%s,%s,%s,%s)",
-                            (
-                                rec["mmsi"],
-                                rec["ts"],
-                                f"SRID=4326;POINT({rec['lon']} {rec['lat']})",
-                                rec["sog"],
-                                rec["cog"],
-                                rec["nav_status"],
-                                rec["source"],
-                            ),
-                        )
-                        await r.xadd(
-                            STREAM,
-                            {"data": json.dumps(rec)},
-                            maxlen=20000,
-                            approximate=True,
-                        )
-                        received += 1
-                        if received % 500 == 0:
-                            log.info("AISStream: %d position reports", received)
+                        # AIS sends 91/181 for "not available" and (0,0) as a
+                        # default. PostGIS rejects the first (an uncaught DataError
+                        # crash-looped this task) and the second manufactures false
+                        # spoofs and rendezvous, so both are dropped here.
+                        rec = position_record(pr, datetime.now(UTC).isoformat())
+                        if rec is None:
+                            dropped += 1
+                            health.dropped_one()
+                            if dropped % 500 == 0:
+                                log.info(
+                                    "AISStream: dropped %d unusable position reports",
+                                    dropped,
+                                )
+                            continue
+                        rec["name"] = (meta.get("ShipName") or "").strip()
+                        batch.append(rec)
+                        if should_flush(len(batch), time.monotonic() - last_flush):
+                            before = received
+                            received += await flush_batch(c, r, batch, health)
+                            batch, last_flush = [], time.monotonic()
+                            if received // 500 != before // 500:
+                                log.info("AISStream: %d position reports", received)
         except (OSError, websockets.WebSocketException, RuntimeError) as e:
             log.warning("AISStream stream ended (%s); reconnecting in 10 s", e)
             await asyncio.sleep(10)
@@ -446,7 +520,6 @@ def main() -> None:
     _wait_for_db()
     apply_schema()
     gen = ScenarioGenerator.from_file(SCENARIO).run()
-    load_reference(gen)
     # The watched areas, for the UI (GET /area): the scenario's box always, plus the
     # catalogue areas WATCH_AREAS names. Live mode subscribes to all of them; replay data
     # exists only in the scenario's own box. `name`/`bbox` stay the scenario's for older
@@ -459,10 +532,20 @@ def main() -> None:
         "duration_minutes": gen.s.get("duration_minutes"),
     }
     area["areas"] = select_areas(area, WATCH_AREAS, load_catalogue(AREAS_FILE))
-    store_meta({"ground_truth": gen.ground_truth(), "area": area})
     if MODE == "live":
+        # The scenario's box is the only part of it that means anything against real
+        # traffic. Everything else the generator produces is fiction, and it used to be
+        # loaded onto real vessels: `DELETE FROM zones` replaced real geography with
+        # invented anchorages, fabricated sanctions were written over real registry
+        # rows, and /ground-truth served an answer key for anomalies that were never
+        # injected. The empty ground truth is written explicitly, because a box
+        # switched from replay to live would otherwise keep serving the old key (P13).
+        store_meta({"ground_truth": [], "area": area})
+        log.info("live mode: scenario reference data not loaded")
         asyncio.run(live_aisstream(area["areas"]))
         return
+    load_reference(gen)
+    store_meta({"ground_truth": gen.ground_truth(), "area": area})
     if PRELOAD:
         bulk_load_positions(gen)
     asyncio.run(replay_stream(gen))

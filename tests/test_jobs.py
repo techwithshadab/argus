@@ -2,8 +2,11 @@
 
 import sys
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
+
+WORKER = (Path(__file__).resolve().parents[1] / "services/api/worker.py").read_text()
 
 sys.path.insert(0, "services/api")
 from a2a_client import extract_text  # noqa: E402
@@ -113,3 +116,51 @@ def test_queue_per_kind_and_worker_kinds(monkeypatch):
     assert set(queue_kinds()) == set(DEFAULT_TIMEOUTS)
     monkeypatch.setenv("WORKER_QUEUE_KIND", "sweep")
     assert queue_kinds() == ("sweep",) and visibility_for(queue_kinds()) == 660
+
+
+# ---- stranded queued jobs ----
+def test_the_worker_requeues_jobs_stranded_in_queued():
+    """The job row is committed before its id is sent, so a failed or lost send leaves
+    the row `queued` with nothing behind it: the worker never sees it, the watch floor
+    shows the investigation queued forever, and because the idempotency key is unique
+    only across `queued`/`running`, every later request for that vessel dedupes against
+    the stranded row instead of starting work. Thirty accumulated over a day."""
+    assert "def requeue_stranded(" in WORKER
+    body = WORKER.split("def requeue_stranded(", 1)[1].split("\ndef ", 1)[0]
+    assert "status='queued'" in body
+    # only this worker's kinds, and only rows old enough to be genuinely stranded
+    assert "KINDS" in body
+    assert "STRANDED_GRACE_S" in body
+    # each row exactly once: selecting on status alone re-sent the same ids every minute
+    # and buried the queue in duplicates (129 deep in production before this)
+    assert "requeue" in body and "progress @>" in body
+    # and never via not_before, which the claim query treats as "not yet runnable"
+    sql = body.split('"""', 1)[1].split('"""', 1)[0] if '"""' in body else body
+    assert "not_before" not in sql
+    # and it must actually run in the loop
+    loop = WORKER.split("while not stop.is_set():", 1)[1][:400]
+    assert "requeue_stranded()" in loop
+
+
+def test_the_stranded_grace_is_longer_than_a_normal_queue_delay():
+    """Re-sending a job that is merely waiting would duplicate work, so the grace period
+    has to sit well beyond a healthy queue delay."""
+    import re
+
+    grace = int(re.search(r'JOB_STRANDED_GRACE_S", "(\d+)"', WORKER).group(1))
+    assert grace >= 300
+
+
+# ---- the id a queue is given ----
+def test_both_queues_stringify_the_job_id():
+    """psycopg returns `jobs.id` as a UUID object. `json.dumps` raises `TypeError:
+    Object of type UUID is not JSON serializable` and redis-py raises `DataError`, both
+    *before* the message is sent — so `open_investigation` committed the row, raised,
+    and returned 500 while the job sat `queued` with attempts=0 forever and nothing
+    was ever logged by SQS or botocore. Sweeps were unaffected only because the
+    worker's own sends already stringified."""
+    src = (Path(__file__).resolve().parents[1] / "services/api/jobqueue.py").read_text()
+    for cls in ("class RedisQueue", "class SqsQueue"):
+        body = src.split(cls, 1)[1].split("\nclass ", 1)[0]
+        send = body.split("def send(", 1)[1].split("\n    def ", 1)[0]
+        assert "str(job_id)" in send, cls

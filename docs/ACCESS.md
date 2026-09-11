@@ -31,7 +31,7 @@ Every page on the UI and on Grafana goes through the load balancer's Cognito sig
 | User pool | `argus-officers`, output `OfficerPoolId` |
 | Username | your email address; the first officer is the `OFFICER_EMAIL` the stack was deployed with |
 | First password | Cognito emails a temporary one (sender `no-reply@verificationemail.com`, valid three days); the first sign-in sets the real one: 12+ characters with upper, lower, digit and symbol |
-| MFA | optional by default (enrol a TOTP app from the sign-in flow); required with `-c officerMfa=required` |
+| MFA | optional by default, so an officer without an authenticator is never locked out; `-c officerMfa=required` enforces TOTP enrolment at the next sign-in |
 
 The **officer** box at the top right of the UI is filled in from the sign-in and is
 read-only on AWS: the API records the email from the signed token on every review,

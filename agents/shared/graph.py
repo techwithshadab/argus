@@ -74,6 +74,26 @@ def json_object(text: str) -> dict:
     raise ValueError("no JSON object in agent response")
 
 
+#: Keys that only ever appear in a JSON Schema property definition, never in an answer.
+_SCHEMA_KEYS = {"title", "type", "items", "default", "anyOf", "$ref", "enum", "format"}
+
+
+def _is_schema_property(v: dict) -> bool:
+    """True for {"title": "Mmsi", "type": "integer"} and friends: schema, not an answer.
+
+    `description` is deliberately outside _SCHEMA_KEYS. A report writer that answers
+    {"headline": {"title": "Headline", "description": "ARA went dark for 198 minutes"}}
+    is clumsy but it did answer, and dropping that key cost the whole report: every
+    required field vanished at once, validate_report rejected it, the node retried,
+    failed again, and the orchestrator restarted the graph in a loop.
+    """
+    if not v or not set(v) <= _SCHEMA_KEYS | {"description"}:
+        return False
+    if "title" not in v and "type" not in v:
+        return False
+    return not str(v.get("description", "")).strip()
+
+
 def unwrap_schema_shape(obj: dict, marker: str) -> dict:
     """Models shown a JSON schema sometimes echo its shape: values nested under
     "properties", or {"value": ...} per field. `marker` is a field a real answer has."""
@@ -87,6 +107,21 @@ def unwrap_schema_shape(obj: dict, marker: str) -> dict:
             and "value" in v
         ):
             v = v["value"]
+        elif isinstance(v, dict) and _is_schema_property(v):
+            # The model echoed the schema's own property definition instead of a value
+            # ({"title": "Mmsi", "type": "integer"}). That is not an answer: drop the key
+            # so the orchestrator's authoritative value fills it. Nova Lite did this on
+            # `mmsi` often enough to fail the behaviour branch ~300 times an hour, which
+            # capped every report's confidence.
+            continue
+        elif (
+            isinstance(v, dict)
+            and str(v.get("description", "")).strip()
+            and set(v) <= _SCHEMA_KEYS | {"description"}
+        ):
+            # Same shape, but the description carries the answer. Take it rather than
+            # hand a dict to a string field and fail validation.
+            v = v["description"]
         out[k] = v
     return out
 
@@ -147,7 +182,9 @@ def findings_payload(
     about a vessel with no registry record still validates instead of failing the case."""
     out = unwrap_schema_shape(obj, "assessment")
     if mmsi is not None:
-        out.setdefault("mmsi", mmsi)
+        # Overwrite, never setdefault: the caller passed the vessel it is investigating,
+        # so a model-supplied mmsi is at best redundant and at worst a different ship.
+        out["mmsi"] = mmsi
     for f in FINDINGS_TEXT_FIELDS:
         v = out.get(f)
         if isinstance(v, list):
@@ -310,6 +347,203 @@ def evidence_gap(findings: InvestigationFindings, alert: dict | None) -> str:
     return findings.behaviour_summary
 
 
+#: Earth radius in nautical miles, as in the geo MCP server.
+EARTH_NM = 3440.065
+#: A collection proposed farther than this from the vessel's last known position is
+#: not about this vessel. A drifting hull moves tens of nautical miles in a long gap;
+#: a wrong ocean is hundreds.
+MAX_AOI_DISTANCE_NM = 200.0
+#: Radius bounds for a usable satellite request: a scene smaller than this resolves
+#: nothing, larger than this is not a re-look.
+AOI_RADIUS_NM = (1.0, 100.0)
+#: The sensors the imagery server will actually accept (`SENSORS` in
+#: mcp-servers/servers/imagery.py, which is authoritative). This list said
+#: ("sar", "optical") while the Tasking agent — correctly — proposed the names the
+#: tool documents, so `check_aoi` rejected *every* recommendation with
+#: "sensor 'sentinel-1-sar' is not one of sar, optical", the orchestrator dropped the
+#: proposal, and every report read "no imagery collection proposed due to tasking agent
+#: unavailability" while the map showed sentinel-1-sar tasking markers. Keep these two
+#: lists in step; `tests/test_graph_policy.py` pins them.
+SENSORS = (
+    "sentinel-1-sar",
+    "sentinel-2-optical",
+    "commercial-sar",
+    "patrol-aircraft",
+)
+#: The generic families the agent may name instead of a specific platform. Accepting
+#: these keeps a reasonable answer ("sar") from being dropped; the imagery tool resolves
+#: the platform when the officer approves.
+SENSOR_FAMILIES = ("sar", "optical")
+
+
+def nm_between(a: tuple[float, float], b: tuple[float, float]) -> float:
+    """Great-circle distance in nautical miles between two (lon, lat) pairs."""
+    import math
+
+    lon1, lat1 = math.radians(a[0]), math.radians(a[1])
+    lon2, lat2 = math.radians(b[0]), math.radians(b[1])
+    h = (
+        math.sin((lat2 - lat1) / 2) ** 2
+        + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2
+    )
+    return 2 * EARTH_NM * math.asin(min(1.0, math.sqrt(h)))
+
+
+def gap_position(alert: dict | None, track: list[dict] | None) -> dict | None:
+    """Where the vessel was last seen before the evidence gap, as {lon, lat, ts}.
+
+    Derived in code from the track the platform already holds, never asked of the
+    model: the Tasking agent has no AIS tool, so when it was handed only prose it
+    invented coordinates, and a live run proposed a SAR collection over New York for
+    a vessel off Singapore. The last report at or before the alert window starts is
+    the point the vessel went dark from; with no window, the newest report.
+    """
+    points = [
+        p
+        for p in (track or [])
+        if p.get("lat") is not None and p.get("lon") is not None
+    ]
+    if not points:
+        return None
+    points.sort(key=lambda p: str(p.get("ts") or ""))
+    started = (alert or {}).get("started_at")
+    chosen = points[-1]
+    if started:
+        before = [p for p in points if str(p.get("ts") or "") <= str(started)]
+        if before:
+            chosen = before[-1]
+    return {
+        "lon": float(chosen["lon"]),
+        "lat": float(chosen["lat"]),
+        "ts": chosen.get("ts"),
+    }
+
+
+def check_aoi(rec: dict, position: dict | None) -> list[str]:
+    """Why this recommendation cannot be acted on, as a list of reasons (empty when it can).
+
+    Checked in code because the officer approving a collection cannot verify a
+    coordinate by eye, and an AOI in the wrong ocean reads exactly like a right one.
+    """
+    problems: list[str] = []
+    if not rec.get("recommended"):
+        return problems
+    centre = rec.get("aoi_center")
+    if not (isinstance(centre, list | tuple) and len(centre) == 2):
+        return ["aoi_center must be [lon, lat]"]
+    try:
+        lon, lat = float(centre[0]), float(centre[1])
+    except (TypeError, ValueError):
+        return ["aoi_center must be [lon, lat]"]
+    if not (-180 <= lon <= 180 and -90 <= lat <= 90):
+        problems.append(f"aoi_center {lon},{lat} is not a position on Earth")
+    elif position:
+        away = nm_between((lon, lat), (position["lon"], position["lat"]))
+        if away > MAX_AOI_DISTANCE_NM:
+            problems.append(
+                f"aoi_center is {away:.0f} nm from the vessel's last known position, "
+                f"more than the {MAX_AOI_DISTANCE_NM:.0f} nm limit"
+            )
+    radius = rec.get("aoi_radius_nm")
+    if radius is not None:
+        try:
+            radius = float(radius)
+        except (TypeError, ValueError):
+            problems.append("aoi_radius_nm must be a number")
+        else:
+            if not (AOI_RADIUS_NM[0] <= radius <= AOI_RADIUS_NM[1]):
+                problems.append(
+                    f"aoi_radius_nm {radius} is outside {AOI_RADIUS_NM[0]}-{AOI_RADIUS_NM[1]} nm"
+                )
+    sensor = (rec.get("sensor") or "").strip().lower()
+    if sensor and sensor not in SENSORS and sensor not in SENSOR_FAMILIES:
+        problems.append(f"sensor {sensor!r} is not one of {', '.join(SENSORS)}")
+    start, end = rec.get("window_start"), rec.get("window_end")
+    if start and end and str(end) < str(start):
+        problems.append("window_end is before window_start")
+    return problems
+
+
+#: Priority ranking, so a cap can be applied the same way confidence is.
+SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2}
+
+
+def degraded_scopes(findings: InvestigationFindings) -> list[str]:
+    """The branches that did not complete, from the provenance the orchestrator records."""
+    prov = findings.provenance or {}
+    out = []
+    for scope in ("identity", "behaviour"):
+        branch = prov.get(scope)
+        if isinstance(branch, dict) and branch.get("degraded"):
+            out.append(scope)
+    if prov.get("degraded") and not out:
+        out.append(findings.scope or "one branch")
+    return out
+
+
+def cap_for_degraded(report: dict, findings: InvestigationFindings) -> dict:
+    """Hold a report's confidence and priority to what the evidence behind it supports.
+
+    Half an investigation still produces a fluent report, and the model set its own
+    confidence from the text in front of it rather than from what was missing: a run
+    with a failed behaviour branch returned high confidence and high priority on
+    identity evidence alone. The cap, the note in the gaps and the caveat are applied
+    in code so they cannot be argued away by a retry. Pure: returns a new dict.
+    """
+    scopes = degraded_scopes(findings)
+    if not scopes:
+        return report
+    out = dict(report)
+    named = " and ".join(scopes)
+    # Never above the findings' own confidence, and never above moderate when a
+    # branch is missing.
+    ceiling = min(
+        (findings.confidence, "moderate"), key=lambda c: CONFIDENCE_RANK.get(c, 0)
+    )
+    if CONFIDENCE_RANK.get(out.get("confidence"), 2) > CONFIDENCE_RANK[ceiling]:
+        out["confidence"] = ceiling
+    if SEVERITY_RANK.get(out.get("priority"), 2) > SEVERITY_RANK["medium"]:
+        out["priority"] = "medium"
+    gap = f"The {named} branch did not complete; this assessment rests on partial evidence."
+    gaps = [g for g in (out.get("information_gaps") or []) if g]
+    if not any(named in g and "did not complete" in g for g in gaps):
+        gaps.append(gap)
+    out["information_gaps"] = gaps
+    caveat = f"The {named} line of enquiry did not complete, so confidence and priority are capped."
+    if caveat not in (out.get("caveats") or ""):
+        out["caveats"] = (str(out.get("caveats") or "").rstrip() + " " + caveat).strip()
+    return out
+
+
+#: Context either side of an alert window when a detector is asked to look again.
+WINDOW_PADDING_H = 12
+
+
+def detector_window(alert: dict | None) -> tuple[float, str | None]:
+    """`(hours, until)` for the detector tools, from the triggering alert's own window.
+
+    Every detector defaults to the last 24 hours from "now", which in live mode is the
+    wall clock. An alert raised 26 hours ago was therefore investigated over a window
+    that did not contain it: every detector returned nothing and the vessel read as
+    entirely benign (A14). Computed here rather than asked of the model, for the same
+    reason the tasking position is (ADR-0019's sibling argument).
+    """
+    alert = alert or {}
+    started, ended = alert.get("started_at"), alert.get("ended_at")
+    if not started and not ended:
+        return 24.0, None
+    until = str(ended or started)
+    try:
+        from datetime import datetime
+
+        t0 = datetime.fromisoformat(str(started or ended).replace("Z", "+00:00"))
+        t1 = datetime.fromisoformat(until.replace("Z", "+00:00"))
+        span = max(0.0, (t1 - t0).total_seconds() / 3600.0)
+    except (TypeError, ValueError):
+        return 24.0, until
+    return round(max(24.0, span + WINDOW_PADDING_H), 1), until
+
+
 def known_sources(findings: InvestigationFindings, tasking: dict | None) -> set[str]:
     """Tool sources the report may cite: everything the specialists cited, plus the tasking
     tools when a tasking recommendation exists."""
@@ -337,7 +571,7 @@ def report_material(
             {k: v for k, v in (tasking or {}).items() if k != "provenance"}, indent=1
         )
         if tasking
-        else "none (tasking agent unavailable)",
+        else "none proposed",
     ]
     if prior:
         parts += ["", "Prior assessments of this vessel from memory:", prior]

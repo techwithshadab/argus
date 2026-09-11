@@ -96,6 +96,8 @@ services:
       MCP_SERVER: ais
       MCP_PORT: "8000"
       DATABASE_URL: postgresql://argus:argus@postgis:5432/argus
+      SCENARIO_END: ${SCENARIO_END:-2026-09-01T08:00:00Z}
+      AIS_MODE: ${AIS_MODE:-replay}
     ports: ["8001:8000"]
     depends_on: {postgis: {condition: service_healthy}}
   mcp-registry:
@@ -124,6 +126,8 @@ services:
       MCP_PORT: "8000"
       DATABASE_URL: postgresql://argus:argus@postgis:5432/argus
       IMAGERY_OFFLINE: ${IMAGERY_OFFLINE:-false}
+      SCENARIO_END: ${SCENARIO_END:-2026-09-01T08:00:00Z}
+      AIS_MODE: ${AIS_MODE:-replay}
     ports: ["8004:8000"]
 
   # ---------------- agents ----------------
@@ -211,7 +215,7 @@ services:
 
   ui:
     build: {context: ., dockerfile: services/ui/Dockerfile}
-    ports: ["8088:80"]
+    ports: ["8088:8080"]
     depends_on: [api]
 
   # ---------------- observability ----------------

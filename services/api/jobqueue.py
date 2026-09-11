@@ -130,6 +130,10 @@ class RedisQueue:
                 raise
 
     def send(self, job_id: str, delay_s: int = 0) -> None:
+        # str() for the same reason as SqsQueue.send: psycopg hands back a UUID object
+        # and redis-py raises `DataError: Invalid input of type: 'UUID'`, so the local
+        # backend fails exactly where AWS did.
+        job_id = str(job_id)
         if delay_s > 0:
             self.r.zadd(DELAYED_ZSET, {job_id: time.time() + delay_s})
         else:
@@ -208,9 +212,16 @@ class SqsQueue:
         self.url = queue_url
 
     def send(self, job_id: str, delay_s: int = 0) -> None:
+        # str() here, not at the call sites: psycopg returns `id` as a UUID object, and
+        # `json.dumps` raises `TypeError: Object of type UUID is not JSON serializable`
+        # *before* the message reaches SQS. The worker's own sends already stringified,
+        # so sweeps worked while every investigation queued from the API raised after
+        # its row was committed: the job sat `queued` with attempts=0 forever, the
+        # officer saw a 500, and no SQS or botocore error was ever logged because the
+        # call never got that far.
         self.sqs.send_message(
             QueueUrl=self.url,
-            MessageBody=json.dumps({"job_id": job_id}),
+            MessageBody=json.dumps({"job_id": str(job_id)}),
             DelaySeconds=min(delay_s, 900),
         )
 

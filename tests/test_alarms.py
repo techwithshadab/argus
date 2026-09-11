@@ -3,6 +3,7 @@
 import re
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,6 +36,11 @@ EXPECTED = [
     "argus-aurora-local-storage",
     "argus-waf-blocked",
     "argus-degraded-branches",
+    "argus-feed-stalled",
+    "argus-sign-in-failures",
+    "argus-alb-auth-errors",
+    "argus-deployment-rollbacks",
+    "argus-sweeps-raising-nothing",
     "argus-nat-<n>-port-allocation",
     "argus-nat-<n>-packets-dropped",
     "argus-eval-<suite>",
@@ -44,7 +50,10 @@ EXPECTED = [
 def test_runbook_documents_every_alarm():
     missing = [n for n in EXPECTED if f"`{n}`" not in RUNBOOK]
     assert not missing, missing
-    stale = re.findall(r"`(argus-[a-z0-9<>-]+)`", RUNBOOK.split("## Alarms")[1])
+    # The alarms section only: later sections name other argus-prefixed things
+    # (snapshot identifiers, for one) that are not alarms.
+    section = RUNBOOK.split("## Alarms")[1].split("\n## ")[0]
+    stale = re.findall(r"`(argus-[a-z0-9<>-]+)`", section)
     unknown = sorted(set(stale) - set(EXPECTED) - {"argus-alerts"})
     assert not unknown, f"RUNBOOK names alarms the stack does not create: {unknown}"
 
@@ -112,3 +121,38 @@ def test_alerts_topic_lets_cloudwatch_alarms_publish():
     assert 'iam.ServicePrincipal("cloudwatch.amazonaws.com")' in grant
     assert '"sns:Publish"' in grant
     assert '"aws:SourceAccount"' in grant
+
+
+def test_the_documented_alarm_count_matches_the_synthesized_stack():
+    """Six documents state a number. It said 31 long after the stack built 35.
+
+    Counted from the template rather than from arithmetic over this module, so it stays
+    true however the alarms are grouped. Skipped when there is no synth output.
+    """
+    import json
+
+    out = ROOT / "infra/cdk/cdk.out/argus-platform.template.json"
+    if not out.exists():
+        pytest.skip("no synth output; run `make synth` first")
+    built = sum(
+        1
+        for r in json.loads(out.read_text())["Resources"].values()
+        if r["Type"] == "AWS::CloudWatch::Alarm"
+    )
+    for doc in ("README.md", "ARCHITECTURE.md", "docs/SECURITY.md", "docs/AUDIT.md"):
+        text = (ROOT / doc).read_text()
+        for stated in re.findall(r"(\d+) (?:CloudWatch )?alarms", text):
+            assert int(stated) == built, (
+                f"{doc} says {stated}; the stack builds {built}"
+            )
+        # A spelled-out count slipped past a digits-only check once.
+        spelled = re.findall(
+            r"\b(?:twenty|thirty|forty|fifty)[- ]?"
+            r"(?:one|two|three|four|five|six|seven|eight|nine)?"
+            r" (?:CloudWatch )?alarms",
+            text,
+            re.I,
+        )
+        assert not spelled, (
+            f"{doc} spells out an alarm count; use digits so it is checked"
+        )

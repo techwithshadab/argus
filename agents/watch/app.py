@@ -22,10 +22,13 @@ from shared.models import for_tier, strands_model
 from shared.platform_client import post
 from shared.prompts_loader import load_prompt, prompt_hash, prompt_version
 from shared.sweep import (
+    alert_evidence,
     candidates_from,
+    expired_candidates,
     non_dismissible,
     rank_candidates,
     render_candidates,
+    sweep_failure,
 )
 from shared.telemetry import configure_strands
 from shared.tools import detector_client, health_urls, strands_tool_clients, tool_name
@@ -58,6 +61,7 @@ def _detect(hours: float, until: str | None) -> dict:
         "open_alerts": (tool_name("ais", "list_open_alerts"), {}),
     }
     out: dict = {}
+    failed: list[str] = []
     with detector_client() as c:
         for key, (name, a) in calls.items():
             res = c.call_tool_sync(f"sweep-{key}-{time.time_ns()}", name, a)
@@ -66,11 +70,21 @@ def _detect(hours: float, until: str | None) -> dict:
                 for part in res.get("content", [])
                 if "text" in part
             )
+            # A policy deny, a SQL error or a gateway refusal arrives as an error
+            # result. Nothing read that, so a broken detector produced `{}` and the
+            # sweep reported a quiet sea (A4).
+            if res.get("status") == "error" or res.get("isError"):
+                log.warning("detector %s failed: %s", name, text[:200])
+                failed.append(key)
+                out[key] = {}
+                continue
             try:
                 out[key] = json.loads(text) if text else {}
             except json.JSONDecodeError:
                 log.warning("detector %s returned no JSON: %s", name, text[:120])
+                failed.append(key)
                 out[key] = {}
+    out["_failed"] = failed
     return out
 
 
@@ -105,8 +119,9 @@ def raise_alert(
         "rationale": rationale,
         "started_at": c["started_at"],
         "ended_at": c["ended_at"],
-        "evidence": list(c["evidence"])
-        + [e for e in (extra_evidence or []) if isinstance(e, dict)],
+        # Canonicalised in pure code: through the gateway the model names tools
+        # `geo___point_in_zones`, which no officer or scorer recognises (A1).
+        "evidence": alert_evidence(c, extra_evidence),
         "created_by": "watch-agent",
     }
     try:
@@ -186,16 +201,33 @@ class WatchExecutor(AgentExecutor):
 
     def sweep(self, hours: float, until: str | None) -> dict:
         det = _detect(hours, until)
+        failed = det.pop("_failed", [])
+        # Every detector failing is a broken sweep, not a calm sea. Raising here fails
+        # the job so it is retried and the alarm fires, instead of reporting zero
+        # candidates exactly as a quiet watch does (A4).
+        broken = sweep_failure(failed)
+        if broken:
+            raise RuntimeError(broken)
         open_alerts = (det.get("open_alerts") or {}).get("alerts") or []
         cands, deferred = rank_candidates(
             candidates_from(det, open_alerts), settings.sweep_max_candidates
         )
         now = time.time()
+        # The runtime is long-lived and each sweep mints fresh ids, so nothing is ever
+        # overwritten; prune before inserting this sweep's own candidates (A11).
+        for cid in expired_candidates(_CANDIDATE_TS, now):
+            _CANDIDATE_TS.pop(cid, None)
+            _CANDIDATES.pop(cid, None)
+            _DISPOSITIONS.pop(cid, None)
         for c in cands:
             _CANDIDATES[c["id"]] = c
             _CANDIDATE_TS[c["id"]] = now
         raised = dismissed = unreviewed = 0
         notes: list[str] = []
+        if failed:
+            notes.append(
+                f"{len(failed)} detector(s) failed and found nothing: {', '.join(failed)}"
+            )
         if deferred:
             notes.append(
                 f"{len(deferred)} lower-ranked candidates deferred to the next sweep"
@@ -253,6 +285,7 @@ class WatchExecutor(AgentExecutor):
             "deferred": len(deferred),
             "already_open": len(open_alerts),
             "vessels_reviewed": len({c["mmsi"] for c in cands}),
+            "failed_detectors": failed,
             "notes": "; ".join(notes)[:2000],
         }
 
@@ -260,7 +293,9 @@ class WatchExecutor(AgentExecutor):
 def parse_sweep_request(text: str) -> tuple[float, str | None]:
     """`hours` and optional `until` from the worker's sweep message."""
     m = re.search(r"last\s+(\d+(?:\.\d+)?)\s*h", text, re.I)
-    u = re.search(r"until\s+(\S+)", text, re.I)
+    # ISO-8601 characters only: `(\S+)` swallowed a trailing full stop, and
+    # `fromisoformat` then raised inside all five detectors (A15).
+    u = re.search(r"until\s+([0-9T:+\-]+(?:\.\d+)?Z?)", text, re.I)
     return (float(m.group(1)) if m else 12.0), (u.group(1) if u else None)
 
 

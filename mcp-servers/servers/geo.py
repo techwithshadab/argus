@@ -49,11 +49,11 @@ def _nm(lon1, lat1, lon2, lat2) -> float:
 @mcp.tool()
 @traced_tool
 def list_zones() -> dict:
-    """All declared zones (protected cables, exclusion areas, port approaches, anchorages) with their properties."""
-    rows = q(
-        "SELECT id, name, kind, properties, ST_AsGeoJSON(geom::geometry) geojson FROM zones ORDER BY id"
-    )
-    return {"zones": rows}
+    """All declared zones (protected cables, exclusion areas, port approaches, anchorages) with their properties. Geometry is not returned: use point_in_zones to test containment."""
+    # The full GeoJSON ring per zone was thousands of characters of vertices the model
+    # cannot use, on a path with no result truncation at all (A9).
+    rows = q("SELECT id, name, kind, properties FROM zones ORDER BY id")
+    return {"zones": rows, "count": len(rows)}
 
 
 @mcp.tool()

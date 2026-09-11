@@ -11,7 +11,7 @@ node_modules/
 infra/cdk/cdk.context.json
 
 # macOS
-.DS_Store
+**/.DS_Store
 
 # Local-only documents: the private docs page, this deployment's addresses, the blog and its assets
 argus-docs.html
@@ -29,3 +29,9 @@ evals/results/
 .pytest_cache/
 .ruff_cache/
 
+# Editor and merge leftovers
+*.bak
+*.orig
+*.rej
+.idea/
+.vscode/
