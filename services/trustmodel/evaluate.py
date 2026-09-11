@@ -28,6 +28,7 @@ from .mcp_scan import SEVERITY_RISK, scan_inventory
 from .validate import summarise, validate
 
 ENV_KEY = "TRUSTMODEL_API_KEY"
+ORG_KEY = "TRUSTMODEL_ORG_ID"
 
 #: Compliance frameworks to score the trajectory against. These two slugs ship in the package;
 #: `--probe` lists what this account actually has via `client.frameworks.list()`.
@@ -50,10 +51,45 @@ def api_key() -> str:
 
 
 def client(key: str | None = None):
-    """The real client. `TrustModelClient`, not the wiki's `Client`."""
+    """The real client. `TrustModelClient`, not the wiki's `Client`.
+
+    `organization_id` matters more than it looks: the compliance-report endpoints answer
+    `400 organization_required` without an `X-Organization-ID` header, which is what made the
+    OWASP evidence pack look like it had never run.
+    """
     from trustmodel import TrustModelClient  # noqa: PLC0415
 
-    return TrustModelClient(api_key=key or api_key(), agent_id="argus-orchestrator")
+    return TrustModelClient(
+        api_key=key or api_key(),
+        agent_id="argus-orchestrator",
+        organization_id=os.getenv(ORG_KEY) or None,
+    )
+
+
+def compliance_report(evaluation_id: int, out_dir: Path) -> Path:
+    """Download the compliance evidence pack PDF for a finished run.
+
+    Not available through the SDK: it is a signed URL (900s) behind an endpoint that needs the
+    organisation header, so this goes direct. The run object's `compliance_frameworks` field
+    reads `[]` even when the pack exists -- do not trust it as a signal that nothing ran.
+    """
+    import urllib.request  # noqa: PLC0415
+
+    org = os.getenv(ORG_KEY, "").strip()
+    if not org:
+        raise SystemExit(f"{ORG_KEY} is not set; the compliance endpoint requires it")
+    base = "https://api.trustmodel.ai/api/v1/agentic/evaluations"
+    req = urllib.request.Request(
+        f"{base}/{evaluation_id}/compliance-report/export/",
+        headers={"X-API-Key": api_key(), "X-Organization-ID": org},
+    )
+    with urllib.request.urlopen(req, timeout=60) as r:  # noqa: S310
+        signed = json.loads(r.read())["signed_url"]
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"compliance_evidence_pack_{evaluation_id}.pdf"
+    with urllib.request.urlopen(signed, timeout=120) as r:  # noqa: S310
+        path.write_bytes(r.read())
+    return path
 
 
 def probe() -> dict:
@@ -260,7 +296,18 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--confirm", action="store_true", help="required: this spends credits"
     )
+    ap.add_argument(
+        "--compliance-report",
+        type=int,
+        metavar="RUN_ID",
+        help="download the compliance evidence pack PDF for a finished run (free)",
+    )
     args = ap.parse_args(argv)
+
+    if args.compliance_report:
+        out = Path("artifacts/trustmodel")
+        print(f"wrote {compliance_report(args.compliance_report, out)}")
+        return 0
 
     if args.probe:
         print(json.dumps(probe(), indent=2, default=str))
