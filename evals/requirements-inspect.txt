@@ -1,5 +1,5 @@
 # The inspect-ai harness (evals/inspect_task.py) pins an older botocore through aioboto3, so it
 # installs separately from the node evals: pip install -r evals/requirements-inspect.txt
-inspect-ai==0.3.261
+inspect-ai==0.3.263
 pyyaml==6.0.3
 httpx==0.28.1
